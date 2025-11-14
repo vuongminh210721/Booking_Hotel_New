@@ -24,8 +24,8 @@ import MorePolicy from "./pages/More_Policy";
 import MemberPrivilege from "./pages/Member_Privilege";
 import View_Home from "./components/View_Home";
 import Booking_Home from "./components/Booking_Home";
-import Login from "./pages/Login";
-import Register from "./pages/Register";
+import Login from "./components/Login";
+import Register from "./components/Register";
 
 const queryClient = new QueryClient();
 

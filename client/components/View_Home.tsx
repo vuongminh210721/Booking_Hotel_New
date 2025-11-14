@@ -232,7 +232,18 @@ export default function View_Home() {
               </div>
 
               <button
-                onClick={() => navigate(`/booking?room=${room.id}`)}
+                onClick={() => {
+                  window.dispatchEvent(
+                    new CustomEvent("openBooking", {
+                      detail: {
+                        roomId: room.id,
+                        roomName: room.name,
+                        price: room.price,
+                        guests: room.guests,
+                      },
+                    })
+                  );
+                }}
                 className="px-6 py-3 bg-white text-teal-600 font-bold text-sm rounded-xl hover:bg-gray-50 hover:scale-105 transition-all shadow-lg whitespace-nowrap"
               >
                 Đặt phòng ngay

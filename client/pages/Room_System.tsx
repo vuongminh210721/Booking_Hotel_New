@@ -28,11 +28,14 @@ export default function RoomSystem() {
           return false;
         }
 
-        // Parse number of guests from room data (now without emoji)
-        const roomGuests = parseInt(room.guests.split(" ")[0], 10) || 1;
+        // If guests filter is provided, parse number of guests from room data and match exactly
+        if (typeof searchFilters.guests !== "undefined" && searchFilters.guests !== null) {
+          const roomGuests = parseInt(room.guests.split(" ")[0], 10) || 1;
+          return roomGuests === searchFilters.guests;
+        }
 
-        // Match EXACT number of guests: 1 khách → phòng 1 người, 2 khách → phòng 2 người, etc.
-        return roomGuests === searchFilters.guests;
+        // No guests filter -> include the room
+        return true;
       });
       setFilteredRooms(filtered);
       setLoading(false);
@@ -67,14 +70,21 @@ export default function RoomSystem() {
     const qLocation = params.get("location") || "";
     const qCheckIn = params.get("checkIn") || "";
     const qCheckOut = params.get("checkOut") || "";
-    const qGuests = parseInt(params.get("guests") || "", 10);
+    const qGuestsParam = params.get("guests");
+    const qGuests = qGuestsParam !== null ? parseInt(qGuestsParam, 10) : undefined;
 
-    if (qLocation || qCheckIn || qCheckOut || !Number.isNaN(qGuests)) {
+    if (qLocation || qCheckIn || qCheckOut || typeof qGuests !== "undefined") {
       const initial = {
         location: qLocation,
         checkIn: qCheckIn,
         checkOut: qCheckOut,
-        guests: Number.isNaN(qGuests) || qGuests === 0 ? 2 : qGuests,
+        // If guests param present but invalid (NaN) or zero, default to 2; if absent, leave undefined
+        guests:
+          typeof qGuests === "undefined"
+            ? undefined
+            : Number.isNaN(qGuests) || qGuests === 0
+              ? 2
+              : qGuests,
       };
       setFilters(initial);
       // run search with parsed params so filteredRooms matches
@@ -131,7 +141,6 @@ export default function RoomSystem() {
                     <p className="mb-1">
                       Tìm thấy <span className="font-bold text-teal-600">{filteredRooms.length}</span> phòng
                       {filters.location && <span> tại <span className="font-semibold text-gray-900">{filters.location}</span></span>}
-                      {filters.guests && <span> cho <span className="font-semibold text-gray-900">{filters.guests}</span> khách</span>}
                     </p>
                     {(filters.checkIn || filters.checkOut) && (
                       <p className="text-sm text-gray-500">

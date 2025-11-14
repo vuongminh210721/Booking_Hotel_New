@@ -1,10 +1,11 @@
 import { useState, useEffect } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { UI_Carousel } from "@/components/Carousel";
 
 export default function Index() {
   const [selectedCity, setSelectedCity] = useState("Tp Hồ Chí Minh");
   const [showBooking, setShowBooking] = useState(false);
+  const navigate = useNavigate();
   const cities = ["Tp Hồ Chí Minh", "Hà Nội", "Đà Nẵng"];
 
   useEffect(() => {
@@ -275,9 +276,12 @@ export default function Index() {
                   key={property.id}
                   property={property}
                   showBooking={showBooking}
-                  onBook={() =>
-                    window.dispatchEvent(new CustomEvent("openBooking"))
-                  }
+                  onBook={() => {
+                    // Navigate to the room system page for the currently selected city
+                    // Room_System expects a `location` query param (see Room_System.tsx)
+                    const params = new URLSearchParams({ location: selectedCity });
+                    navigate(`/rooms?${params.toString()}`);
+                  }}
                 />
               ))}
             </div>
@@ -348,9 +352,9 @@ function PropertyCard({
         <div className={`absolute inset-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent transition-opacity duration-300 ${isHovered ? 'opacity-80' : 'opacity-90'
           }`}></div>
 
-        {/* Floating badge */}
-        <div className="absolute top-4 right-4 bg-white/95 backdrop-blur-sm px-3 py-1.5 rounded-full shadow-lg">
-          <span className="text-xs font-semibold text-teal-600">⭐ Nổi bật</span>
+        {/* Floating badge (moved to left) */}
+        <div className="absolute top-4 left-4 bg-white/95 backdrop-blur-sm px-3 py-1.5 rounded-full shadow-lg">
+          <span className="text-xs font-semibold text-teal-600">⭐ Thịnh hành</span>
         </div>
       </div>
 
@@ -367,44 +371,44 @@ function PropertyCard({
           </div>
         </div>
 
-        <button
-          onClick={() => {
-            setBooked(true);
-            onBook?.();
-          }}
-          className={`w-full flex items-center justify-center gap-2 font-semibold py-3 px-4 rounded-xl transition-all duration-300 ${booked
-            ? "bg-gradient-to-r from-teal-500 to-green-500 text-white shadow-lg"
-            : "bg-gradient-to-r from-teal-500 to-green-500 text-white hover:shadow-xl hover:scale-105"
-            }`}
-        >
-          <span className="text-sm md:text-base">
-            {booked ? "Đang xử lý..." : "Đặt phòng ngay"}
-          </span>
-          {!booked && (
-            <svg
-              width="18"
-              height="18"
-              viewBox="0 0 16 16"
-              fill="none"
-              className="transition-transform group-hover:translate-x-1"
-            >
-              <path
-                d="M4 12L12 4"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-              <path
-                d="M5.5 4H12V10.5"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          )}
-        </button>
+        <div className="flex justify-end">
+          <button
+            onClick={() => {
+              setBooked(true);
+              onBook?.();
+            }}
+            className={`w-fit flex items-center justify-center gap-1 font-semibold py-3 px-4 rounded-xl transition-all duration-500 ${booked
+              ? "bg-gradient-to-r from-teal-500 to-green-500 text-white shadow-lg"
+              : "bg-gradient-to-r from-teal-500 to-green-500 text-white hover:shadow-xl hover:scale-105"
+              }`}
+          >
+            <span className="text-sm md:text-base">{"Xem thêm"}</span>
+            {!booked && (
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 16 16"
+                fill="none"
+                className="transition-transform group-hover:translate-x-1"
+              >
+                <path
+                  d="M4 12L12 4"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <path
+                  d="M5.5 4H12V10.5"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            )}
+          </button>
+        </div>
       </div>
     </div>
   );

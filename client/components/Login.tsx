@@ -48,7 +48,7 @@ export default function Login() {
                </div>
                <div className="flex items-center justify-between gap-4">
                   <button className="bg-teal-500 text-white px-6 py-2 rounded-md hover:bg-teal-600">Đăng nhập</button>
-                  <Link to="/register" className="text-sm text-gray-600 hover:underline">Chưa có tài khoản? Đăng ký</Link>
+                  <Link to="/register" className="text-sm text-gray-600 hover:underline"> Đăng ký</Link>
                </div>
             </form>
          </div>
