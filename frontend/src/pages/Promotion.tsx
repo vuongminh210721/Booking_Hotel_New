@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import {
    X,
    Gift,
@@ -11,8 +11,8 @@ import {
    Copy,
    Ticket,
    ChevronRight,
-   RotateCw,
-   Zap,
+   // RotateCw,
+   // Zap,
    UserPlus,
    Baby,
    Briefcase,
@@ -532,10 +532,10 @@ export default function PromotionsPage() {
                               type="text"
                               placeholder="VD: MV2025GOLD"
                               className="flex-1 px-6 py-4 rounded-xl border-2 border-gray-300 focus:border-teal-500 outline-none text-lg font-medium transition-all"
-                              onChange={(e) => {
-                                 const value = e.target.value.trim().toUpperCase();
-                                 // Bạn có thể thêm logic kiểm tra mã hợp lệ ở đây sau
-                              }}
+                              // onChange={(e) => {
+                              //    const value = e.target.value.trim().toUpperCase();
+                              //    // Bạn có thể thêm logic kiểm tra mã hợp lệ ở đây sau
+                              // }}
                            />
                            <button
                               disabled={true} // bật khi có mã hợp lệ

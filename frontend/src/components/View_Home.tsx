@@ -273,7 +273,7 @@ export default function View_Home() {
                               }}
                               className="px-6 py-3 bg-white text-[#2fd680] font-bold text-sm rounded-xl hover:bg-gray-50 hover:scale-105 transition-all shadow-lg whitespace-nowrap"
                            >
-                              Đặt phòng ngay
+                              Chọn phòng
                            </button>
                         </>
                      ) : (

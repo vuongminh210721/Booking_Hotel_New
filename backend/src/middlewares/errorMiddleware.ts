@@ -16,7 +16,7 @@ export const errorMiddleware = (
   err: AppError | Error,
   req: Request,
   res: Response,
-  next: NextFunction,
+  next: NextFunction
 ) => {
   let statusCode = 500;
   let message = "Internal Server Error";
@@ -24,13 +24,13 @@ export const errorMiddleware = (
   if (err instanceof AppError) {
     statusCode = err.statusCode;
     message = err.message;
-  } else if (err.name === "ValidationError") {
+  } else if ((err as any).name === "ValidationError") {
     statusCode = 400;
     message = "Validation Error";
-  } else if (err.name === "CastError") {
+  } else if ((err as any).name === "CastError") {
     statusCode = 400;
     message = "Invalid ID format";
-  } else if (err.name === "JsonWebTokenError") {
+  } else if ((err as any).name === "JsonWebTokenError") {
     statusCode = 401;
     message = "Invalid token";
   } else if (err.message) {
@@ -40,6 +40,8 @@ export const errorMiddleware = (
   res.status(statusCode).json({
     success: false,
     message,
-    ...(process.env.NODE_ENV === "development" && { stack: err.stack }),
+    ...(process.env.NODE_ENV === "development" && {
+      stack: (err as any).stack,
+    }),
   });
 };

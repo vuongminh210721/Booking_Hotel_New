@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { User, Mail, Lock, CheckCircle, Sparkles, Upload, Camera } from "lucide-react";
+import { User, Mail, Lock, CheckCircle, Sparkles, Camera } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { useScrollToTop } from "@/hooks/use-scroll-to-top";
 

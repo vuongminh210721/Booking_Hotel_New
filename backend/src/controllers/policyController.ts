@@ -6,10 +6,10 @@ import { AppError } from "../middlewares/errorMiddleware";
 export const getAllPolicies = async (
   req: Request,
   res: Response,
-  next: NextFunction,
+  next: NextFunction
 ) => {
   try {
-    const policies = await Policy.find({ isActive: true });
+    const policies = await Policy.find({ isActive: true }).sort({ order: 1 });
     res.json(successResponse(policies));
   } catch (error) {
     next(error);
@@ -19,7 +19,7 @@ export const getAllPolicies = async (
 export const getPolicyBySlug = async (
   req: Request,
   res: Response,
-  next: NextFunction,
+  next: NextFunction
 ) => {
   try {
     const policy = await Policy.findOne({
@@ -38,7 +38,7 @@ export const getPolicyBySlug = async (
 export const createPolicy = async (
   req: Request,
   res: Response,
-  next: NextFunction,
+  next: NextFunction
 ) => {
   try {
     const policy = await Policy.create(req.body);
@@ -53,7 +53,7 @@ export const createPolicy = async (
 export const updatePolicy = async (
   req: Request,
   res: Response,
-  next: NextFunction,
+  next: NextFunction
 ) => {
   try {
     const policy = await Policy.findByIdAndUpdate(req.params.id, req.body, {
@@ -72,7 +72,7 @@ export const updatePolicy = async (
 export const deletePolicy = async (
   req: Request,
   res: Response,
-  next: NextFunction,
+  next: NextFunction
 ) => {
   try {
     const policy = await Policy.findByIdAndDelete(req.params.id);

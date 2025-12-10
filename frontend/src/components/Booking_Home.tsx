@@ -2,8 +2,10 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import React, { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { X, User, Mail, Phone, Calendar, Users, Hotel, CheckCircle, Sparkles, CreditCard, Banknote, Wallet } from "lucide-react";
-import qrImage from "@/assets/Screenshot 2025-11-26 223920.png";
+import { X, User, Mail, Phone, Calendar, Users, Hotel, CheckCircle, Sparkles } from "lucide-react";
+
+// API URL từ environment
+const API_BASE_URL = import.meta.env.VITE_API_URL || "/api";
 
 // Định nghĩa loại phòng với giá tiền
 const ROOM_TYPES = {
@@ -19,6 +21,7 @@ export default function Booking_Home() {
    const [phone, setPhone] = useState("");
    const [roomType, setRoomType] = useState<keyof typeof ROOM_TYPES>("Phòng trung cấp");
    const [roomPrice, setRoomPrice] = useState<string>("");
+   const [roomId, setRoomId] = useState<string>("");
    const [checkIn, setCheckIn] = useState("");
    const [checkOut, setCheckOut] = useState("");
    const [guests, setGuests] = useState<number>(2);
@@ -30,15 +33,6 @@ export default function Booking_Home() {
    const navigate = useNavigate();
    const { user, isAuthenticated } = useAuth();
 
-   // Debug: Log khi component mount
-   useEffect(() => {
-      console.log("🏨 Booking_Home component mounted");
-      console.log("🔐 isAuthenticated:", isAuthenticated);
-      console.log("👤 user:", user);
-      return () => {
-         console.log("🏨 Booking_Home component unmounted");
-      };
-   }, []);
 
    useEffect(() => {
       const handleOpenBooking = (e: any) => {
@@ -59,6 +53,7 @@ export default function Booking_Home() {
 
          // Save intended booking details so we can resume after login
          const intent = {
+            roomId: detail.roomId ? String(detail.roomId) : "",
             roomName: String(detail.roomName || roomType),
             price: String(detail.price || roomPrice || ""),
             guests: guestsNumber,
@@ -97,6 +92,7 @@ export default function Booking_Home() {
                }
             }
          }
+         if (intent.roomId) setRoomId(intent.roomId);
          if (intent.price) setRoomPrice(intent.price);
          if (intent.guests) setGuests(intent.guests);
          if (intent.checkIn) setCheckIn(intent.checkIn);
@@ -168,6 +164,7 @@ export default function Booking_Home() {
       setPhone("");
       setRoomType("Phòng trung cấp");
       setRoomPrice("");
+      setRoomId("");
       setCheckIn("");
       setCheckOut("");
       setGuests(2);
@@ -199,9 +196,6 @@ export default function Booking_Home() {
    const formatPrice = (price: number) => {
       return new Intl.NumberFormat('vi-VN').format(price);
    };
-
-   const totalPrice = calculateTotalPrice();
-   const depositPrice = Math.round(totalPrice * 0.3);
 
    const validateBooking = () => {
       if (!fullName.trim()) return "Vui lòng nhập họ tên.";
@@ -237,6 +231,7 @@ export default function Booking_Home() {
       if (!isAuthenticated) {
          try {
             const pending = {
+               roomId,
                roomName: roomType,
                guests,
                checkIn,
@@ -258,9 +253,9 @@ export default function Booking_Home() {
       }
       setStatus("sending");
       try {
-         await new Promise((res) => setTimeout(res, 800));
-         // Chuyển thẳng đến trang thanh toán
-         setStatus("payment");
+         await new Promise((res) => setTimeout(res, 400));
+         // Bỏ qua bước hiển thị thanh toán, lưu đặt phòng và thêm vào hóa đơn
+         await handleCompletePayment();
       } catch (err) {
          setStatus("error");
          setError("Gửi đặt phòng thất bại, vui lòng thử lại.");
@@ -274,19 +269,46 @@ export default function Booking_Home() {
 
    const handleCompletePayment = async () => {
       try {
+         // Kiểm tra token trước khi gửi request (hỗ trợ cả key cũ/new)
+         const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+         if (!token) {
+            setStatus("error");
+            // Không hiển thị thông báo yêu cầu đăng nhập nếu isAuthenticated đã được kiểm tra trước đó
+            setError("Vui lòng đăng nhập để đặt phòng.");
+            const currentPath = window.location.pathname + window.location.search;
+            navigate(`/login?redirect=${encodeURIComponent(currentPath)}&action=openBooking`);
+            return;
+         }
+
          // Lấy giá phòng
          const pricePerNight = roomPrice
             ? parseFloat(roomPrice.replace(/\./g, ""))
             : (ROOM_TYPES[roomType]?.price || 0);
 
          // Gọi API để lưu booking
-         const response = await fetch("http://localhost:5000/api/bookings", {
+         console.log("\n\n📤 ============= Booking Request Sent =============");
+         console.log("📤 URL:", `${API_BASE_URL}/bookings`);
+         console.log("📤 Token (first 30 chars):", token.substring(0, 30) + "...");
+         console.log("📤 Body:", {
+            roomType,
+            roomPrice: pricePerNight,
+            fullName,
+            email,
+            phone,
+            checkIn,
+            checkOut,
+            guests,
+            paymentMethod,
+         });
+
+         const response = await fetch(`${API_BASE_URL}/bookings`, {
             method: "POST",
             headers: {
                "Content-Type": "application/json",
-               "Authorization": `Bearer ${localStorage.getItem("token")}`,
+               "Authorization": `Bearer ${token}`,
             },
             body: JSON.stringify({
+               roomId: roomId || undefined,
                roomType,
                roomPrice: pricePerNight.toString(),
                fullName,
@@ -299,17 +321,150 @@ export default function Booking_Home() {
             }),
          });
 
+         console.log("📤 Response Status:", response.status, response.statusText);
+         console.log("📤 ===============================================\n");
+
          if (response.ok) {
-            console.log("✅ Booking saved successfully");
+            // Parse response to obtain bill/booking details (robust to multiple shapes)
+            let parsed: any = null;
+            try {
+               parsed = await response.json();
+            } catch { parsed = null; }
+
+            console.log("\n\n📥 ============= Booking Response Received =============");
+            console.log("📥 Full response object:", JSON.stringify(parsed, null, 2));
+            console.log("📥 Response.success:", parsed?.success);
+            console.log("📥 Response.data:", parsed?.data);
+            console.log("📥 Response.data.booking:", parsed?.data?.booking);
+            console.log("📥 Response.data.bill:", parsed?.data?.bill);
+            console.log("📥 Response.booking:", parsed?.booking);
+            console.log("📥 Response.bill:", parsed?.bill);
+            console.log("📥 Response keys:", Object.keys(parsed || {}));
+            console.log("📥 ======================================================\n");
+
+            // Backend returns { success, data: { booking, bill }, message }
+            let billObj = parsed?.data?.bill || parsed?.bill || null;
+
+            console.log("🔍 Extracted billObj from response:", billObj);
+
+            // If backend didn't return a bill but returned booking data, build
+            // a normalized temporary bill object so the FloatingBills UI can
+            // immediately display the booked room and amounts.
+            if (!billObj) {
+               const booking = parsed?.data?.booking || parsed?.booking || null;
+               console.log("🔍 No bill in response, trying to build from booking:", booking);
+               if (booking) {
+                  try {
+                     const bCheckIn = booking.checkIn ? new Date(booking.checkIn) : new Date(checkIn);
+                     const bCheckOut = booking.checkOut ? new Date(booking.checkOut) : new Date(checkOut);
+                     const nights = Math.max(1, Math.ceil((bCheckOut.getTime() - bCheckIn.getTime()) / (1000 * 60 * 60 * 24)));
+                     const nightlyPrice = booking.nightlyPrice || booking.room?.price || (roomPrice ? parseFloat(roomPrice.toString().replace(/\./g, "")) : 0);
+                     const total = booking.totalPrice ?? nightlyPrice * nights;
+                     const tax = total * 0.08;
+                     const finalAmount = total + tax;
+
+                     const roomName = booking.room?.name || booking.roomName || roomType;
+
+                     billObj = {
+                        _id: booking._id ? `temp-${booking._id}` : `temp-${Date.now()}`,
+                        booking: booking._id || null,
+                        customerInfo: {
+                           fullName: booking.fullName || fullName,
+                           email: booking.email || email,
+                           phone: booking.phone || phone,
+                        },
+                        roomInfo: {
+                           roomName,
+                           roomType: booking.roomType || roomType,
+                           nightlyPrice,
+                        },
+                        bookingDetails: {
+                           roomName,
+                           roomType: booking.roomType || roomType,
+                           nightlyPrice,
+                           nights,
+                           guests: booking.guests || guests,
+                           checkIn: booking.checkIn || checkIn,
+                           checkOut: booking.checkOut || checkOut,
+                           specialRequests: booking.specialRequests || "",
+                        },
+                        checkIn: booking.checkIn || checkIn,
+                        checkOut: booking.checkOut || checkOut,
+                        nights,
+                        guests: booking.guests || guests,
+                        roomPrice: nightlyPrice,
+                        totalPrice: total,
+                        discount: 0,
+                        tax,
+                        finalAmount,
+                        paymentMethod: booking.paymentMethod || paymentMethod,
+                        paymentStatus: booking.paymentStatus || (paymentMethod === "deposit" ? "unpaid" : "paid"),
+                        specialRequests: booking.specialRequests || "",
+                        status: booking.status || "active",
+                        issuedDate: new Date().toISOString(),
+                     };
+                     console.log("✅ Built fallback bill from booking:", billObj);
+                  } catch (e) {
+                     console.warn("Could not build fallback bill from booking data:", e);
+                  }
+               }
+            }
+
+            const evtDetail = billObj ? { bill: billObj } : { raw: parsed };
+
+            // Persist the bill locally so FloatingBills can show it even if network fetch is delayed
+            try {
+               if (billObj) {
+                  localStorage.setItem("last_bill", JSON.stringify(billObj));
+               }
+            } catch (err) {
+               console.warn("⚠️ Could not cache last bill locally:", err);
+            }
+
+            console.log("\n\n📤 ============= Dispatching Events =============");
+            console.log("📤 billObj found:", !!billObj);
+            console.log("📤 evtDetail:", evtDetail);
+            console.log("📤 Event 1: bookingCreated with detail:", evtDetail);
+            console.log("📤 Event 2: openBills (same detail)");
+            console.log("📤 ==============================================\n");
+
+            // Thông báo và phát sự kiện để FloatingBills cập nhật và tự mở modal
+            try {
+               const evt = new CustomEvent("bookingCreated", { detail: evtDetail });
+               window.dispatchEvent(evt);
+
+               // Also request the bills modal to open so user sees the created bill
+               const openEvt = new CustomEvent("openBills", { detail: evtDetail });
+               window.dispatchEvent(openEvt);
+            } catch (e) { console.warn('Failed to dispatch booking events', e); }
+
             setStatus("success");
+
+            // Close booking modal shortly after success so bills modal can be visible
+            setTimeout(() => {
+               setShowBooking(false);
+               resetForm();
+            }, 700);
          } else {
             const error = await response.json();
-            console.error("❌ Booking save failed:", error);
-            alert("Lưu đặt phòng thất bại: " + (error.message || "Lỗi không xác định"));
+            setStatus("error");
+
+            // Nếu lỗi token, redirect về login
+            if (response.status === 401) {
+               setError("Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.");
+               localStorage.removeItem("token");
+               localStorage.removeItem("auth_token");
+               setTimeout(() => {
+                  const currentPath = window.location.pathname + window.location.search;
+                  navigate(`/login?redirect=${encodeURIComponent(currentPath)}&action=openBooking`);
+               }, 1500);
+            } else {
+               setError(error.message || "Lưu đặt phòng thất bại. Vui lòng thử lại.");
+            }
          }
       } catch (error) {
-         console.error("❌ Error saving booking:", error);
-         alert("Có lỗi xảy ra khi lưu đặt phòng");
+         setStatus("error");
+         setError("Có lỗi xảy ra khi lưu đặt phòng. Vui lòng thử lại.");
       }
    };
 
@@ -337,12 +492,10 @@ export default function Booking_Home() {
                         </div>
                         <div>
                            <h3 className="text-2xl font-bold text-white flex items-center gap-2">
-                              {status === "payment" ? "Thanh toán đặt phòng" : "Đặt phòng ngay"}
-                              {status !== "payment" && <Sparkles className="w-5 h-5 text-amber-200" />}
+                              Chọn phòng
+                              <Sparkles className="w-5 h-5 text-amber-200" />
                            </h3>
-                           <p className="text-white/80 text-sm">
-                              {status === "payment" ? "Hoàn tất thanh toán an toàn" : "Trải nghiệm sang trọng đang chờ bạn"}
-                           </p>
+                           <p className="text-white/80 text-sm">Trải nghiệm sang trọng đang chờ bạn</p>
                         </div>
                      </div>
                      <button onClick={handleFinalClose} className="bg-white/20 hover:bg-white/30 backdrop-blur-sm text-white p-2 rounded-full transition-all duration-300 hover:rotate-90">
@@ -363,98 +516,7 @@ export default function Booking_Home() {
                   </div>
                )}
 
-               {/* PAYMENT */}
-               {status === "payment" && (
-                  <div className="p-8">
-                     <div className="space-y-6">
-                        <div className="bg-gradient-to-br from-gray-50 to-slate-50 p-6 rounded-2xl border border-gray-200">
-                           <h4 className="text-lg font-bold text-gray-800 mb-4">Tóm tắt đặt phòng</h4>
-                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
-                              <div><span className="font-medium text-gray-600">Khách:</span> <strong>{fullName}</strong></div>
-                              <div><span className="font-medium text-gray-600">Phòng:</span> <strong>{roomType}</strong></div>
-                              <div><span className="font-medium text-gray-600">Nhận:</span> <strong>{checkIn ? new Date(checkIn).toLocaleDateString("vi-VN") : ""}</strong></div>
-                              <div><span className="font-medium text-gray-600">Trả:</span> <strong>{checkOut ? new Date(checkOut).toLocaleDateString("vi-VN") : ""}</strong></div>
-                              <div><span className="font-medium text-gray-600">Số khách:</span> <strong>{guests} người</strong></div>
-                              <div><span className="font-medium text-gray-600">Số đêm:</span> <strong>{checkIn && checkOut ? Math.max(1, Math.ceil((new Date(checkOut).getTime() - new Date(checkIn).getTime()) / (1000 * 60 * 60 * 24))) : 1} đêm</strong></div>
-                           </div>
-                           <div className="mt-4 pt-4 border-t border-gray-300">
-                              <div className="flex justify-between items-center">
-                                 <span className="font-semibold text-gray-700">Tổng tiền:</span>
-                                 <strong className="text-2xl text-teal-600">{formatPrice(totalPrice)} ₫</strong>
-                              </div>
-                           </div>
-                        </div>
-
-                        <div className="bg-blue-50 border border-blue-200 p-4 rounded-2xl">
-                           <h4 className="text-sm font-bold text-blue-900 mb-2 flex items-center gap-2">
-                              <CheckCircle className="w-4 h-4" />
-                              Chính sách đặt phòng
-                           </h4>
-                           <ul className="text-xs text-blue-800 space-y-1.5">
-                              <li>• Nhận phòng: 8:00 | Trả phòng: 8:00</li>
-                              <li>• Hủy miễn phí trước 24h check-in</li>
-                              <li>• Hủy sau 24h: giữ 30% tiền cọc</li>
-                              <li>• Xuất hóa đơn VAT theo yêu cầu</li>
-                              <li>• Thanh toán bằng tiền mặt hoặc chuyển khoản</li>
-                           </ul>
-                        </div>
-
-                        <div className="bg-gradient-to-br from-slate-50 to-gray-100 p-6 rounded-2xl border border-gray-200">
-                           <h4 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2"><Wallet className="w-5 h-5 text-slate-600" /> Hình thức thanh toán</h4>
-                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                              <label className={`flex items-center p-4 border-2 rounded-xl cursor-pointer transition-all hover:shadow-sm ${paymentMethod === "deposit" ? "border-teal-500 bg-teal-50" : "border-gray-300"
-                                 }`}>
-                                 <input type="radio" name="pay" value="deposit" checked={paymentMethod === "deposit"} onChange={() => setPaymentMethod("deposit")} className="w-5 h-5 text-teal-600" />
-                                 <div className="ml-3">
-                                    <p className="font-bold text-gray-800">Đặt cọc 30%</p>
-                                    <p className="text-sm text-gray-600">{formatPrice(depositPrice)} ₫</p>
-                                 </div>
-                              </label>
-                              <label className={`flex items-center p-4 border-2 rounded-xl cursor-pointer transition-all hover:shadow-sm ${paymentMethod === "full" ? "border-teal-500 bg-teal-50" : "border-gray-300"
-                                 }`}>
-                                 <input type="radio" name="pay" value="full" checked={paymentMethod === "full"} onChange={() => setPaymentMethod("full")} className="w-5 h-5 text-teal-600" />
-                                 <div className="ml-3">
-                                    <p className="font-bold text-gray-800">Thanh toán hết</p>
-                                    <p className="text-sm text-gray-600">{formatPrice(totalPrice)} ₫</p>
-                                 </div>
-                              </label>
-                           </div>
-                        </div>
-
-                        <div className="space-y-4">
-                           <h4 className="text-lg font-bold text-gray-800 flex items-center gap-2"><CreditCard className="w-5 h-5 text-slate-600" /> Phương thức thanh toán</h4>
-                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                              <div className="bg-white p-6 rounded-2xl border border-gray-200 text-center shadow-sm">
-                                 <div className="bg-gray-50 p-4 rounded-xl mb-4 w-full flex justify-center border border-gray-300">
-                                    <img src={qrImage} alt="QR Thanh toán" loading="lazy" className="w-60 h-60 object-contain drop-shadow-sm" />
-                                 </div>
-                                 <h5 className="font-bold text-gray-800 mb-2">Quét mã QR</h5>
-                                 <p className="text-sm text-gray-600 mb-3">Dùng ứng dụng ngân hàng</p>
-                                 <div className="bg-gray-100 p-3 rounded-lg text-xs font-mono text-gray-700">VietQR • TPBank • 0123456789</div>
-                                 <p className="text-lg font-bold text-slate-700 mt-3">{formatPrice(paymentMethod === "deposit" ? depositPrice : totalPrice)} ₫</p>
-                              </div>
-                              <div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm">
-                                 <div className="flex items-center gap-3 mb-4"><Banknote className="w-8 h-8 text-slate-600" /><div><h5 className="font-bold text-gray-800">Chuyển khoản</h5><p className="text-xs text-gray-600">Nội dung: {fullName} - {roomType}</p></div></div>
-                                 <div className="space-y-2 text-sm">
-                                    <div className="flex justify-between"><span className="text-gray-600">Ngân hàng:</span><strong>TPBank</strong></div>
-                                    <div className="flex justify-between"><span className="text-gray-600">Chủ TK:</span><strong>CÔNG TY RESORT XYZ</strong></div>
-                                    <div className="flex justify-between"><span className="text-gray-600">Số TK:</span><strong>0123456789</strong></div>
-                                    <div className="flex justify-between"><span className="text-gray-600">Số tiền:</span><strong className="text-slate-700">{formatPrice(paymentMethod === "deposit" ? depositPrice : totalPrice)} ₫</strong></div>
-                                 </div>
-                              </div>
-                           </div>
-                        </div>
-
-                        <div className="pt-4">
-                           <button onClick={handleCompletePayment} className="w-full bg-gradient-to-r from-teal-500 to-green-500 hover:from-teal-600 hover:to-green-600 text-white font-bold py-5 rounded-xl shadow-lg hover:shadow-xl hover:scale-105 transition-all duration-300 flex items-center justify-center gap-3 text-lg">
-                              <CheckCircle className="w-6 h-6" /> Hoàn tất thanh toán
-                           </button>
-                           <p className="text-center text-sm text-gray-500 mt-3">Chụp biên lai → gửi email: <strong>booking@resort.xyz</strong></p>
-
-                        </div>
-                     </div>
-                  </div>
-               )}
+               {/* PAYMENT STEP REMOVED: Nội dung thanh toán sẽ được thêm vào bill và không hiển thị tại đây */}
 
                {/* FORM */}
                {status !== "success" && status !== "payment" && (

@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
+import { useState } from "react";
+import { useLocation } from "react-router-dom";
 
 const CITIES = ["Tp Hồ Chí Minh", "Đà Nẵng", "Hà Nội"];
 
@@ -23,7 +23,7 @@ export default function SearchBar({
   initialCheckOut = "",
   initialLocation = CITIES[0],
 }: SearchBarProps) {
-  const navigate = useNavigate();
+  // const navigate = useNavigate();
   const location = useLocation();
   // Read from query params if present
   const params = new URLSearchParams(location.search);

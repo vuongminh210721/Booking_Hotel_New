@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import Logo from "./Logo";
 import { useAuth } from "@/context/AuthContext";
-import UserMenu from "./UserMenu";
+import UserMenu from "./User_Menu";
 
 export default function Header() {
   const [scrolled, setScrolled] = useState(false);
@@ -41,7 +41,7 @@ export default function Header() {
     };
   }, [location.pathname, heroThreshold]);
 
-  console.log(JSON.parse(localStorage.getItem('auth_user')))
+  console.log(JSON.parse(localStorage.getItem('auth_user') || '{}'))
 
   return (
     <header

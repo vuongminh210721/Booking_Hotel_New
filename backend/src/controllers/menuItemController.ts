@@ -1,7 +1,8 @@
 import { Request, Response, NextFunction } from "express";
 import MenuItem from "../models/MenuItem";
+import { successResponse } from "../utils/responseFormatter";
+import { AppError } from "../middlewares/errorMiddleware";
 
-// Get all menu items
 export const getAllMenuItems = async (
   req: Request,
   res: Response,
@@ -9,7 +10,6 @@ export const getAllMenuItems = async (
 ) => {
   try {
     const { category, isAvailable, search } = req.query;
-
     const filter: any = {};
     if (category) filter.category = category;
     if (isAvailable !== undefined) filter.isAvailable = isAvailable === "true";
@@ -24,34 +24,28 @@ export const getAllMenuItems = async (
       category: 1,
       name: 1,
     });
-
-    res.json(menuItems);
-  } catch (error: any) {
+    res.json(successResponse(menuItems));
+  } catch (error) {
     next(error);
   }
 };
 
-// Get menu items by category
 export const getMenuItemsByCategory = async (
   req: Request,
   res: Response,
   next: NextFunction
 ) => {
   try {
-    const { category } = req.params;
-
     const menuItems = await MenuItem.find({
-      category,
+      category: req.params.category,
       isAvailable: true,
     }).sort({ name: 1 });
-
-    res.json(menuItems);
-  } catch (error: any) {
+    res.json(successResponse(menuItems));
+  } catch (error) {
     next(error);
   }
 };
 
-// Get menu item by ID
 export const getMenuItemById = async (
   req: Request,
   res: Response,
@@ -59,34 +53,30 @@ export const getMenuItemById = async (
 ) => {
   try {
     const menuItem = await MenuItem.findById(req.params.id);
-
     if (!menuItem) {
-      return res.status(404).json({ message: "Menu item not found" });
+      throw new AppError("Menu item not found", 404);
     }
-
-    res.json(menuItem);
-  } catch (error: any) {
+    res.json(successResponse(menuItem));
+  } catch (error) {
     next(error);
   }
 };
 
-// Create menu item (admin only)
 export const createMenuItem = async (
   req: Request,
   res: Response,
   next: NextFunction
 ) => {
   try {
-    const menuItem = new MenuItem(req.body);
-    await menuItem.save();
-
-    res.status(201).json(menuItem);
-  } catch (error: any) {
+    const menuItem = await MenuItem.create(req.body);
+    res
+      .status(201)
+      .json(successResponse(menuItem, "Menu item created successfully"));
+  } catch (error) {
     next(error);
   }
 };
 
-// Update menu item (admin only)
 export const updateMenuItem = async (
   req: Request,
   res: Response,
@@ -97,18 +87,15 @@ export const updateMenuItem = async (
       new: true,
       runValidators: true,
     });
-
     if (!menuItem) {
-      return res.status(404).json({ message: "Menu item not found" });
+      throw new AppError("Menu item not found", 404);
     }
-
-    res.json(menuItem);
-  } catch (error: any) {
+    res.json(successResponse(menuItem, "Menu item updated successfully"));
+  } catch (error) {
     next(error);
   }
 };
 
-// Delete menu item (admin only)
 export const deleteMenuItem = async (
   req: Request,
   res: Response,
@@ -116,46 +103,41 @@ export const deleteMenuItem = async (
 ) => {
   try {
     const menuItem = await MenuItem.findByIdAndDelete(req.params.id);
-
     if (!menuItem) {
-      return res.status(404).json({ message: "Menu item not found" });
+      throw new AppError("Menu item not found", 404);
     }
-
-    res.json({ message: "Menu item deleted successfully" });
-  } catch (error: any) {
+    res.json(successResponse(null, "Menu item deleted successfully"));
+  } catch (error) {
     next(error);
   }
 };
 
-// Get all categories
 export const getCategories = async (
   req: Request,
   res: Response,
   next: NextFunction
 ) => {
   try {
-    const categories = await MenuItem.distinct("category");
-    res.json(categories);
-  } catch (error: any) {
+    const categories = await MenuItem.distinct("category", {
+      isAvailable: true,
+    });
+    res.json(successResponse(categories));
+  } catch (error) {
     next(error);
   }
 };
 
-// Get popular menu items (by rating)
 export const getPopularMenuItems = async (
   req: Request,
   res: Response,
   next: NextFunction
 ) => {
   try {
-    const { limit = 10 } = req.query;
-
     const menuItems = await MenuItem.find({ isAvailable: true })
-      .sort({ rating: -1, reviewCount: -1 })
-      .limit(Number(limit));
-
-    res.json(menuItems);
-  } catch (error: any) {
+      .sort({ orderCount: -1 })
+      .limit(10);
+    res.json(successResponse(menuItems));
+  } catch (error) {
     next(error);
   }
 };

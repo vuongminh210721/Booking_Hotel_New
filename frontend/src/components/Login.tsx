@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { Mail, Lock, LogIn, Sparkles } from "lucide-react";
+import { Mail, Lock, LogIn } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { useScrollToTop } from "@/hooks/use-scroll-to-top";
 

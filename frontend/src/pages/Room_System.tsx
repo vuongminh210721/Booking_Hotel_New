@@ -20,7 +20,7 @@ export default function RoomSystem() {
     guests: 2,
   });
 
-  const handleSearch = (searchFilters) => {
+  const handleSearch = (searchFilters: any) => {
     setLoading(true);
     // Update filters state so UI displays current search criteria
     setFilters(searchFilters);
@@ -86,24 +86,16 @@ export default function RoomSystem() {
     const qCheckIn = params.get("checkIn") || "";
     const qCheckOut = params.get("checkOut") || "";
     const qGuestsParam = params.get("guests");
-    const qGuests = qGuestsParam !== null ? parseInt(qGuestsParam, 10) : undefined;
+    const qGuests = qGuestsParam !== null ? parseInt(qGuestsParam, 10) : 2;
 
-    if (qLocation || qCheckIn || qCheckOut || typeof qGuests !== "undefined") {
+    if (qLocation || qCheckIn || qCheckOut) {
       const initial = {
         location: qLocation,
         checkIn: qCheckIn,
         checkOut: qCheckOut,
-        // If guests param present but invalid (NaN) or zero, default to 2; if absent, leave undefined
-        guests:
-          typeof qGuests === "undefined"
-            ? undefined
-            : Number.isNaN(qGuests) || qGuests === 0
-              ? 2
-              : qGuests,
+        guests: qGuests,
       };
-      setFilters(initial);
-
-      // Apply filtering immediately on mount
+      setFilters(initial);      // Apply filtering immediately on mount
       setLoading(true);
       setTimeout(() => {
         const filtered = rooms.filter((room) => {

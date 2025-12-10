@@ -27,6 +27,7 @@ import Login from "./components/Login";
 import Register from "./components/Register";
 import Profile from "./pages/Profile";
 import Reviews from "./pages/Reviews";
+import FloatingBills from "./components/Floating_Bill";
 
 const queryClient = new QueryClient();
 
@@ -39,6 +40,8 @@ const RouteWrapper: React.FC = () => {
       <Header />
       {/* Mount booking modal globally so it can listen for openBooking events */}
       <Booking_Home />
+      {/* Floating Bills Button */}
+      <FloatingBills />
       <main className={`flex-1 ${isHome ? "" : "pt-16"}`}>
         <Routes>
           <Route path="/carousel" element={<UI_Carousel />} />

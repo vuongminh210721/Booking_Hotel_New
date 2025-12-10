@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
-import { useScrollToTop } from "@/hooks/use-scroll-to-top";
+// import { useScrollToTop } from "@/hooks/use-scroll-to-top";
 import { MapPin, Maximize2, Home as HomeIcon, Users, CheckCircle, ArrowRight, Image as ImageIcon } from "lucide-react";
 
 interface Amenity {
@@ -21,7 +21,6 @@ interface RoomCardProps {
   amenities: Amenity[];
   price?: string;
   availability?: string;
-  availabilityUnderline?: boolean;
   soldOut?: boolean;
   images: string[];
 }
@@ -82,7 +81,7 @@ function RoomBookButton({ id, name, price, guests }: { id: string; name: string;
       onClick={handleClick}
       className="px-6 py-3 bg-gradient-to-r from-teal-500 to-green-500 text-white text-sm md:text-base font-semibold rounded-full hover:shadow-xl transition-all duration-300 hover:scale-105 inline-flex items-center gap-2"
     >
-      <span>Đặt phòng ngay</span>
+      <span>Chọn phòng</span>
       <ArrowRight className="w-5 h-5" />
     </button>
   );
@@ -101,7 +100,6 @@ export default function RoomCard({
   amenities,
   price,
   availability,
-  availabilityUnderline,
   soldOut,
   images,
 }: RoomCardProps) {

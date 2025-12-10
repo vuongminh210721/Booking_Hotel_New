@@ -12,7 +12,8 @@ import { authMiddleware, adminMiddleware } from "../middlewares/authMiddleware";
 const router = Router();
 
 // Public routes
-router.post("/", createBooking);
+// Require authentication for creating bookings so bills can be linked to the user
+router.post("/", authMiddleware, createBooking);
 router.get("/:id", getBookingById);
 
 // Authenticated user routes
@@ -25,7 +26,9 @@ router.patch(
   "/:id/status",
   authMiddleware,
   adminMiddleware,
-  updateBookingStatus,
+  updateBookingStatus
 );
 
 export default router;
+
+// export default router;

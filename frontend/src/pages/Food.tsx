@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useInView } from "react-intersection-observer";
 
@@ -184,7 +184,32 @@ const DishCard = ({ dish }: { dish: Dish }) => {
         <p className="text-lg font-bold text-teal-600 mt-3 mb-3">
           {dish.price}
         </p>
-        <button className="w-full bg-teal-500 text-white font-bold py-2 rounded-lg hover:bg-teal-600 transition-colors mt-auto">
+        <button
+          onClick={() => {
+            // Persist a queued extra so it's available if the bill modal isn't mounted
+            try {
+              const raw = localStorage.getItem('queued_extras');
+              const arr = raw ? JSON.parse(raw) : [];
+              arr.push({ title: dish.title, price: dish.price, img: dish.images[0], source: 'food', ts: Date.now() });
+              localStorage.setItem('queued_extras', JSON.stringify(arr));
+            } catch (err) {
+              // ignore
+            }
+
+            // Dispatch event to add the ordered dish as food in the bill (if Floating_Bill is mounted)
+            window.dispatchEvent(new CustomEvent('selectFood', {
+              detail: {
+                title: dish.title,
+                price: dish.price,
+                images: dish.images // Use images array
+              }
+            }));
+
+            // Also open the bills modal (if mounted)
+            window.dispatchEvent(new CustomEvent('openBills', { detail: { from: 'food', title: dish.title } }));
+          }}
+          className="w-full bg-teal-500 text-white font-bold py-2 rounded-lg hover:bg-teal-600 transition-colors mt-auto"
+        >
           Đặt món
         </button>
       </div>

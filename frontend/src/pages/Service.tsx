@@ -349,7 +349,21 @@ const ServiceModal = ({
                 <p className="text-gray-600">{service.contactPerson}</p>
               </div>
             )}
-            <button className="w-full bg-gradient-to-r from-teal-500 to-green-500 text-white font-bold py-4 rounded-2xl hover:from-teal-600 hover:to-green-600 transition-all duration-300 mt-auto shadow-lg hover:shadow-xl transform hover:scale-[1.02]">
+            <button
+              onClick={() => {
+                // Dispatch event to add service to bill
+                window.dispatchEvent(new CustomEvent('selectService', {
+                  detail: {
+                    title: service.title,
+                    price: service.price,
+                    img: service.img
+                  }
+                }));
+                // Close modal after selection
+                onClose();
+              }}
+              className="w-full bg-gradient-to-r from-teal-500 to-green-500 text-white font-bold py-4 rounded-2xl hover:from-teal-600 hover:to-green-600 transition-all duration-300 mt-auto shadow-lg hover:shadow-xl transform hover:scale-[1.02]"
+            >
               Đặt dịch vụ
             </button>
           </div>

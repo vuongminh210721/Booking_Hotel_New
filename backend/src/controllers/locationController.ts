@@ -1,7 +1,8 @@
 import { Request, Response, NextFunction } from "express";
 import Location from "../models/Location";
+import { successResponse } from "../utils/responseFormatter";
+import { AppError } from "../middlewares/errorMiddleware";
 
-// Get all locations
 export const getAllLocations = async (
   req: Request,
   res: Response,
@@ -9,20 +10,17 @@ export const getAllLocations = async (
 ) => {
   try {
     const { city, isActive } = req.query;
-
     const filter: any = {};
     if (city) filter.city = city;
     if (isActive !== undefined) filter.isActive = isActive === "true";
 
     const locations = await Location.find(filter).sort({ city: 1, name: 1 });
-
-    res.json(locations);
-  } catch (error: any) {
+    res.json(successResponse(locations));
+  } catch (error) {
     next(error);
   }
 };
 
-// Get location by ID
 export const getLocationById = async (
   req: Request,
   res: Response,
@@ -30,54 +28,46 @@ export const getLocationById = async (
 ) => {
   try {
     const location = await Location.findById(req.params.id);
-
     if (!location) {
-      return res.status(404).json({ message: "Location not found" });
+      throw new AppError("Location not found", 404);
     }
-
-    res.json(location);
-  } catch (error: any) {
+    res.json(successResponse(location));
+  } catch (error) {
     next(error);
   }
 };
 
-// Get locations by city
 export const getLocationsByCity = async (
   req: Request,
   res: Response,
   next: NextFunction
 ) => {
   try {
-    const { city } = req.params;
-
     const locations = await Location.find({
-      city,
+      city: req.params.city,
       isActive: true,
     }).sort({ name: 1 });
-
-    res.json(locations);
-  } catch (error: any) {
+    res.json(successResponse(locations));
+  } catch (error) {
     next(error);
   }
 };
 
-// Create location (admin only)
 export const createLocation = async (
   req: Request,
   res: Response,
   next: NextFunction
 ) => {
   try {
-    const location = new Location(req.body);
-    await location.save();
-
-    res.status(201).json(location);
-  } catch (error: any) {
+    const location = await Location.create(req.body);
+    res
+      .status(201)
+      .json(successResponse(location, "Location created successfully"));
+  } catch (error) {
     next(error);
   }
 };
 
-// Update location (admin only)
 export const updateLocation = async (
   req: Request,
   res: Response,
@@ -88,18 +78,15 @@ export const updateLocation = async (
       new: true,
       runValidators: true,
     });
-
     if (!location) {
-      return res.status(404).json({ message: "Location not found" });
+      throw new AppError("Location not found", 404);
     }
-
-    res.json(location);
-  } catch (error: any) {
+    res.json(successResponse(location, "Location updated successfully"));
+  } catch (error) {
     next(error);
   }
 };
 
-// Delete location (admin only)
 export const deleteLocation = async (
   req: Request,
   res: Response,
@@ -107,18 +94,15 @@ export const deleteLocation = async (
 ) => {
   try {
     const location = await Location.findByIdAndDelete(req.params.id);
-
     if (!location) {
-      return res.status(404).json({ message: "Location not found" });
+      throw new AppError("Location not found", 404);
     }
-
-    res.json({ message: "Location deleted successfully" });
-  } catch (error: any) {
+    res.json(successResponse(null, "Location deleted successfully"));
+  } catch (error) {
     next(error);
   }
 };
 
-// Get all cities
 export const getCities = async (
   req: Request,
   res: Response,
@@ -126,8 +110,8 @@ export const getCities = async (
 ) => {
   try {
     const cities = await Location.distinct("city", { isActive: true });
-    res.json(cities);
-  } catch (error: any) {
+    res.json(successResponse(cities));
+  } catch (error) {
     next(error);
   }
 };

@@ -424,7 +424,7 @@ export const rooms: Room[] = [
       { label: "Cửa sổ lớn" },
       { label: "Máy pha cà phê" },
     ],
-    price: "2.100.000",
+    price: "10.000",
     availability: "Còn 3 phòng",
     availabilityUnderline: true,
     images: [room13_1, room13_2, room13_3, room13_4, room13_5],

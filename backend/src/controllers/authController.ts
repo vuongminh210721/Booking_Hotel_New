@@ -76,6 +76,12 @@ export const login = async (
     }
 
     const token = generateToken(user._id.toString());
+    console.log("\n🔐 ============= Login =============");
+    console.log("🔐 User ID:", user._id);
+    console.log("🔐 User ID string:", user._id.toString());
+    console.log("🔐 User ID type:", typeof user._id);
+    console.log("🔐 Token generated:", token.substring(0, 20) + "...");
+    console.log("🔐 =====================================\n");
 
     res.json(
       successResponse(

@@ -1,8 +1,13 @@
 import { Request, Response, NextFunction } from "express";
 import Review from "../models/Review";
-import mongoose from "mongoose";
+import Room from "../models/Room";
+import {
+  successResponse,
+  paginationResponse,
+} from "../utils/responseFormatter";
+import { AppError } from "../middlewares/errorMiddleware";
+import { AuthRequest } from "../middlewares/authMiddleware";
 
-// Get all reviews
 export const getAllReviews = async (
   req: Request,
   res: Response,
@@ -10,37 +15,25 @@ export const getAllReviews = async (
 ) => {
   try {
     const { room, rating, limit = 20, page = 1 } = req.query;
-
     const filter: any = {};
     if (room) filter.room = room;
     if (rating) filter.rating = Number(rating);
 
     const skip = (Number(page) - 1) * Number(limit);
-
     const reviews = await Review.find(filter)
-      .populate("user", "fullName avatarUrl")
-      .populate("room", "name location")
+      .populate("room", "name type location")
+      .populate("user", "fullName email")
       .sort({ createdAt: -1 })
       .limit(Number(limit))
       .skip(skip);
 
     const total = await Review.countDocuments(filter);
-
-    res.json({
-      reviews,
-      pagination: {
-        total,
-        page: Number(page),
-        limit: Number(limit),
-        totalPages: Math.ceil(total / Number(limit)),
-      },
-    });
-  } catch (error: any) {
+    res.json(paginationResponse(reviews, Number(page), Number(limit), total));
+  } catch (error) {
     next(error);
   }
 };
 
-// Get review by ID
 export const getReviewById = async (
   req: Request,
   res: Response,
@@ -48,232 +41,158 @@ export const getReviewById = async (
 ) => {
   try {
     const review = await Review.findById(req.params.id)
-      .populate("user", "fullName avatarUrl")
-      .populate("room", "name location");
-
+      .populate("room", "name type location")
+      .populate("user", "fullName email");
     if (!review) {
-      return res.status(404).json({ message: "Review not found" });
+      throw new AppError("Review not found", 404);
     }
-
-    res.json(review);
-  } catch (error: any) {
+    res.json(successResponse(review));
+  } catch (error) {
     next(error);
   }
 };
 
-// Create review (requires authentication)
 export const createReview = async (
-  req: Request,
+  req: AuthRequest,
   res: Response,
   next: NextFunction
 ) => {
   try {
-    const { room, hotelName, rating, comment, images } = req.body;
-    const userId = (req as any).user?.userId;
-
-    if (!userId) {
-      return res.status(401).json({ message: "Unauthorized" });
+    const { roomId, rating, comment, images } = req.body;
+    const room = await Room.findById(roomId);
+    if (!room) {
+      throw new AppError("Room not found", 404);
     }
 
-    // Validate rating
-    if (rating < 1 || rating > 5) {
-      return res
-        .status(400)
-        .json({ message: "Rating must be between 1 and 5" });
+    const existingReview = await Review.findOne({
+      room: roomId,
+      user: req.user._id,
+    });
+    if (existingReview) {
+      throw new AppError("You have already reviewed this room", 400);
     }
 
-    const review = new Review({
-      user: userId,
-      room,
-      hotelName,
+    const review = await Review.create({
+      room: roomId,
+      user: req.user._id,
       rating,
       comment,
       images: images || [],
-      isVerified: false, // Can be set to true if user has a confirmed booking
     });
 
+    const populatedReview = await Review.findById(review._id)
+      .populate("room", "name type location")
+      .populate("user", "fullName email");
+
+    res
+      .status(201)
+      .json(successResponse(populatedReview, "Review created successfully"));
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const updateReview = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const review = await Review.findById(req.params.id);
+    if (!review) {
+      throw new AppError("Review not found", 404);
+    }
+
+    if (review.user.toString() !== req.user._id.toString()) {
+      throw new AppError("You can only update your own reviews", 403);
+    }
+
+    const { rating, comment, images } = req.body;
+    review.rating = rating || review.rating;
+    review.comment = comment || review.comment;
+    review.images = images || review.images;
     await review.save();
 
     const populatedReview = await Review.findById(review._id)
-      .populate("user", "fullName avatarUrl")
-      .populate("room", "name location");
+      .populate("room", "name type location")
+      .populate("user", "fullName email");
 
-    res.status(201).json(populatedReview);
-  } catch (error: any) {
+    res.json(successResponse(populatedReview, "Review updated successfully"));
+  } catch (error) {
     next(error);
   }
 };
 
-// Update review (only by owner)
-export const updateReview = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => {
-  try {
-    const { rating, comment, images } = req.body;
-    const userId = (req as any).user?.userId;
-
-    if (!userId) {
-      return res.status(401).json({ message: "Unauthorized" });
-    }
-
-    const review = await Review.findById(req.params.id);
-
-    if (!review) {
-      return res.status(404).json({ message: "Review not found" });
-    }
-
-    // Check if user is the owner of the review
-    if (review.user.toString() !== userId) {
-      return res
-        .status(403)
-        .json({ message: "Not authorized to update this review" });
-    }
-
-    if (rating !== undefined) {
-      if (rating < 1 || rating > 5) {
-        return res
-          .status(400)
-          .json({ message: "Rating must be between 1 and 5" });
-      }
-      review.rating = rating;
-    }
-    if (comment) review.comment = comment;
-    if (images) review.images = images;
-
-    await review.save();
-
-    const updatedReview = await Review.findById(review._id)
-      .populate("user", "fullName avatarUrl")
-      .populate("room", "name location");
-
-    res.json(updatedReview);
-  } catch (error: any) {
-    next(error);
-  }
-};
-
-// Delete review (only by owner)
 export const deleteReview = async (
-  req: Request,
+  req: AuthRequest,
   res: Response,
   next: NextFunction
 ) => {
   try {
-    const userId = (req as any).user?.userId;
-
-    if (!userId) {
-      return res.status(401).json({ message: "Unauthorized" });
-    }
-
     const review = await Review.findById(req.params.id);
-
     if (!review) {
-      return res.status(404).json({ message: "Review not found" });
+      throw new AppError("Review not found", 404);
     }
 
-    // Check if user is the owner of the review
-    if (review.user.toString() !== userId) {
-      return res
-        .status(403)
-        .json({ message: "Not authorized to delete this review" });
+    if (review.user.toString() !== req.user._id.toString()) {
+      throw new AppError("You can only delete your own reviews", 403);
     }
 
-    await Review.findByIdAndDelete(req.params.id);
-
-    res.json({ message: "Review deleted successfully" });
-  } catch (error: any) {
+    await review.deleteOne();
+    res.json(successResponse(null, "Review deleted successfully"));
+  } catch (error) {
     next(error);
   }
 };
 
-// Mark review as helpful
 export const markHelpful = async (
-  req: Request,
+  req: AuthRequest,
   res: Response,
   next: NextFunction
 ) => {
   try {
     const review = await Review.findById(req.params.id);
-
     if (!review) {
-      return res.status(404).json({ message: "Review not found" });
+      throw new AppError("Review not found", 404);
     }
 
-    review.helpful += 1;
+    review.helpfulCount = (review.helpfulCount || 0) + 1;
     await review.save();
 
-    res.json({ helpful: review.helpful });
-  } catch (error: any) {
+    res.json(successResponse(review, "Marked as helpful"));
+  } catch (error) {
     next(error);
   }
 };
 
-// Get reviews by user
 export const getUserReviews = async (
-  req: Request,
+  req: AuthRequest,
   res: Response,
   next: NextFunction
 ) => {
   try {
-    const userId = req.params.userId || (req as any).user?.userId;
-
-    if (!userId) {
-      return res.status(401).json({ message: "Unauthorized" });
-    }
-
-    const reviews = await Review.find({ user: userId })
-      .populate("room", "name location images")
+    const reviews = await Review.find({ user: req.user._id })
+      .populate("room", "name type location images")
       .sort({ createdAt: -1 });
 
-    res.json(reviews);
-  } catch (error: any) {
+    res.json(successResponse(reviews));
+  } catch (error) {
     next(error);
   }
 };
 
-// Get reviews by room
 export const getRoomReviews = async (
   req: Request,
   res: Response,
   next: NextFunction
 ) => {
   try {
-    const { roomId } = req.params;
-    const { limit = 20, page = 1 } = req.query;
+    const reviews = await Review.find({ room: req.params.roomId })
+      .populate("user", "fullName")
+      .sort({ createdAt: -1 });
 
-    const skip = (Number(page) - 1) * Number(limit);
-
-    const reviews = await Review.find({ room: roomId })
-      .populate("user", "fullName avatarUrl")
-      .sort({ createdAt: -1 })
-      .limit(Number(limit))
-      .skip(skip);
-
-    const total = await Review.countDocuments({ room: roomId });
-
-    // Calculate average rating
-    const avgResult = await Review.aggregate([
-      { $match: { room: new mongoose.Types.ObjectId(roomId) } },
-      { $group: { _id: null, avgRating: { $avg: "$rating" } } },
-    ]);
-
-    const avgRating = avgResult.length > 0 ? avgResult[0].avgRating : 0;
-
-    res.json({
-      reviews,
-      stats: {
-        total,
-        avgRating: Math.round(avgRating * 10) / 10,
-      },
-      pagination: {
-        page: Number(page),
-        limit: Number(limit),
-        totalPages: Math.ceil(total / Number(limit)),
-      },
-    });
-  } catch (error: any) {
+    res.json(successResponse(reviews));
+  } catch (error) {
     next(error);
   }
 };

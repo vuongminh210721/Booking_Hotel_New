@@ -3,15 +3,20 @@ import { useNavigate } from "react-router-dom";
 
 const CITIES = ["Tp Hồ Chí Minh", "Đà Nẵng", "Hà Nội"];
 
+interface BannerSearchBarProps {
+   isHomePage?: boolean;
+   scrolled?: boolean;
+}
+
 export default function Banner_Search_Bar({
    isHomePage = false,
    scrolled = false,
-}) {
+}: BannerSearchBarProps) {
    const [guests, setGuests] = useState(2);
    const [checkIn, setCheckIn] = useState("");
    const [checkOut, setCheckOut] = useState("");
    const [location, setLocation] = useState(CITIES[0]);
-   const [priceRange, setPriceRange] = useState("");
+   // priceRange was removed (not used) to avoid unused-variable lint errors
    const [clicked, setClicked] = useState(false);
    const [errorMessage, setErrorMessage] = useState("");
    const navigate = useNavigate();
@@ -44,7 +49,7 @@ export default function Banner_Search_Bar({
       if (checkIn) params.set("checkIn", checkIn);
       if (checkOut) params.set("checkOut", checkOut);
       if (guests) params.set("guests", String(guests));
-      if (priceRange) params.set("priceRange", priceRange);
+      // priceRange omitted: add if needed in future
       navigate(`/rooms?${params.toString()}`);
    };
 
@@ -55,7 +60,7 @@ export default function Banner_Search_Bar({
    };
 
    return (
-      <div className="w-full max-w-[1200px] mx-auto px-4">
+      <div className={`w-full max-w-[1200px] mx-auto px-4 ${isHomePage ? 'pt-2' : ''} ${scrolled ? 'backdrop-blur-sm' : ''}`}>
          {/* Transparent frame for banner (no background color) */}
          <div className="rounded-2xl overflow-hidden bg-transparent p-6">
             <div className="flex items-center gap-4">

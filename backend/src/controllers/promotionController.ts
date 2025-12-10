@@ -6,7 +6,7 @@ import { AppError } from "../middlewares/errorMiddleware";
 export const getAllPromotions = async (
   req: Request,
   res: Response,
-  next: NextFunction,
+  next: NextFunction
 ) => {
   try {
     const now = new Date();
@@ -24,7 +24,7 @@ export const getAllPromotions = async (
 export const getPromotionByCode = async (
   req: Request,
   res: Response,
-  next: NextFunction,
+  next: NextFunction
 ) => {
   try {
     const promotion = await Promotion.findOne({
@@ -43,7 +43,7 @@ export const getPromotionByCode = async (
 export const validatePromotion = async (
   req: Request,
   res: Response,
-  next: NextFunction,
+  next: NextFunction
 ) => {
   try {
     const { code, bookingAmount, roomId } = req.body;
@@ -72,7 +72,7 @@ export const validatePromotion = async (
     ) {
       throw new AppError(
         `Minimum booking amount is ${promotion.minBookingAmount}`,
-        400,
+        400
       );
     }
 
@@ -100,8 +100,8 @@ export const validatePromotion = async (
           discountAmount,
           finalAmount: bookingAmount - discountAmount,
         },
-        "Promotion is valid",
-      ),
+        "Promotion is valid"
+      )
     );
   } catch (error) {
     next(error);
@@ -111,7 +111,7 @@ export const validatePromotion = async (
 export const createPromotion = async (
   req: Request,
   res: Response,
-  next: NextFunction,
+  next: NextFunction
 ) => {
   try {
     const promotion = await Promotion.create(req.body);
@@ -126,13 +126,13 @@ export const createPromotion = async (
 export const updatePromotion = async (
   req: Request,
   res: Response,
-  next: NextFunction,
+  next: NextFunction
 ) => {
   try {
     const promotion = await Promotion.findByIdAndUpdate(
       req.params.id,
       req.body,
-      { new: true, runValidators: true },
+      { new: true, runValidators: true }
     );
     if (!promotion) {
       throw new AppError("Promotion not found", 404);
@@ -146,7 +146,7 @@ export const updatePromotion = async (
 export const deletePromotion = async (
   req: Request,
   res: Response,
-  next: NextFunction,
+  next: NextFunction
 ) => {
   try {
     const promotion = await Promotion.findByIdAndDelete(req.params.id);

@@ -10,21 +10,22 @@ import { AppError } from "../middlewares/errorMiddleware";
 export const getAllRooms = async (
   req: Request,
   res: Response,
-  next: NextFunction,
+  next: NextFunction
 ) => {
   try {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 10;
-    const skip = (page - 1) * limit;
+    const { type, minPrice, maxPrice, location } = req.query;
 
-    const rooms = await Room.find({ availability: true })
-      .skip(skip)
-      .limit(limit)
-      .sort({ createdAt: -1 });
+    const filter: any = { availability: true, soldOut: false };
+    if (type) filter.type = type;
+    if (location) filter.location = location;
+    if (minPrice || maxPrice) {
+      filter.price = {};
+      if (minPrice) filter.price.$gte = Number(minPrice);
+      if (maxPrice) filter.price.$lte = Number(maxPrice);
+    }
 
-    const total = await Room.countDocuments({ availability: true });
-
-    res.json(paginationResponse(rooms, page, limit, total));
+    const rooms = await Room.find(filter).sort({ createdAt: -1 });
+    res.json(successResponse(rooms));
   } catch (error) {
     next(error);
   }
@@ -33,11 +34,13 @@ export const getAllRooms = async (
 export const getRoomsByLocation = async (
   req: Request,
   res: Response,
-  next: NextFunction,
+  next: NextFunction
 ) => {
   try {
-    const { location } = req.params;
-    const rooms = await Room.find({ location, availability: true });
+    const rooms = await Room.find({
+      location: req.params.location,
+      availability: true,
+    });
     res.json(successResponse(rooms));
   } catch (error) {
     next(error);
@@ -47,7 +50,7 @@ export const getRoomsByLocation = async (
 export const getRoomById = async (
   req: Request,
   res: Response,
-  next: NextFunction,
+  next: NextFunction
 ) => {
   try {
     const room = await Room.findById(req.params.id);
@@ -63,7 +66,7 @@ export const getRoomById = async (
 export const createRoom = async (
   req: Request,
   res: Response,
-  next: NextFunction,
+  next: NextFunction
 ) => {
   try {
     const room = await Room.create(req.body);
@@ -76,7 +79,7 @@ export const createRoom = async (
 export const updateRoom = async (
   req: Request,
   res: Response,
-  next: NextFunction,
+  next: NextFunction
 ) => {
   try {
     const room = await Room.findByIdAndUpdate(req.params.id, req.body, {
@@ -95,7 +98,7 @@ export const updateRoom = async (
 export const deleteRoom = async (
   req: Request,
   res: Response,
-  next: NextFunction,
+  next: NextFunction
 ) => {
   try {
     const room = await Room.findByIdAndDelete(req.params.id);

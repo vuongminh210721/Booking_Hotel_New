@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import Booking from "../models/Booking";
 import Room from "../models/Room";
 import Policy from "../models/Policy";
+import Bill from "../models/Bill";
 import {
   successResponse,
   paginationResponse,
@@ -33,25 +34,35 @@ export const createBooking = async (
     let room = null;
     let roomPrice = 0;
 
-    // If roomId provided, use specific room
-    if (roomId) {
-      room = await Room.findById(roomId);
+    // Validate roomId to avoid CastError: invalid ObjectId
+    const isValidRoomId =
+      roomId && typeof roomId === "string" && roomId.trim().length > 0;
+
+    if (isValidRoomId) {
+      room = await Room.findById(roomId).catch(() => null);
       if (!room) {
-        throw new AppError("Room not found", 404);
+        // Fallback: allow booking by roomType + customRoomPrice if provided
+        if (roomType && customRoomPrice) {
+          console.warn(
+            "Room not found by roomId, falling back to roomType + custom price"
+          );
+          room = null;
+          roomPrice = parseFloat(customRoomPrice);
+        } else {
+          throw new AppError("Room not found", 404);
+        }
+      } else {
+        if (!room.availability || room.soldOut) {
+          throw new AppError("Room is not available", 400);
+        }
+        roomPrice = room.discountPrice || room.price;
       }
-      if (!room.availability || room.soldOut) {
-        throw new AppError("Room is not available", 400);
-      }
-      roomPrice = room.discountPrice || room.price;
-    }
-    // Otherwise use roomType with custom price
-    else if (roomType && customRoomPrice) {
+    } else if (roomType && customRoomPrice) {
       roomPrice = parseFloat(customRoomPrice);
     } else {
       throw new AppError("Room information is required", 400);
     }
 
-    // Calculate total price
     const checkInDate = new Date(checkIn);
     const checkOutDate = new Date(checkOut);
     const nights = Math.ceil(
@@ -64,13 +75,15 @@ export const createBooking = async (
 
     const totalPrice = roomPrice * nights;
 
-    // Get active policies for email
     const policies = await Policy.find({ isActive: true }).select(
       "title type content"
     );
 
-    // Prepare booking payload (omit room if not specific)
+    // Get user ID from authenticated request
+    const userId = (req as any).user?._id;
+
     const bookingPayload: any = {
+      user: userId, // Add user to booking
       fullName,
       email,
       phone,
@@ -81,7 +94,9 @@ export const createBooking = async (
       status: "confirmed",
       paymentStatus: paymentMethod === "deposit" ? "unpaid" : "paid",
       specialRequests: roomType
-        ? `Loại phòng: ${roomType}${specialRequests ? ". " + specialRequests : ""}`
+        ? `Loại phòng: ${roomType}${
+            specialRequests ? ". " + specialRequests : ""
+          }`
         : specialRequests,
     };
     if (room) {
@@ -93,7 +108,6 @@ export const createBooking = async (
 
     const booking = await Booking.create(bookingPayload);
 
-    // Populate room details for response and email only if room exists
     let populatedBooking = booking;
     if (room) {
       populatedBooking = (await Booking.findById(booking._id).populate(
@@ -101,8 +115,6 @@ export const createBooking = async (
       )) as any;
     }
 
-    // Send confirmation email to customer
-    // Build generic room info if no specific room
     const roomInfo = room
       ? {
           name: room.name,
@@ -129,7 +141,7 @@ export const createBooking = async (
 
     try {
       const emailPayloadBase = {
-        bookingId: booking._id.toString(),
+        bookingId: (booking as any)._id.toString(),
         fullName,
         phone,
         email,
@@ -160,9 +172,100 @@ export const createBooking = async (
       console.error("Failed to send confirmation email:", emailError);
     }
 
+    // Auto create bill after booking and return it together with booking
+    let createdBill: any = null;
+    try {
+      const tax = totalPrice * 0.08;
+      const finalAmount = totalPrice + tax;
+      const userId = (req as any).user?._id;
+
+      console.log("\n\n💳 ============= Creating Bill START =============");
+      console.log("💳 User ID:", userId);
+      console.log("💳 User ID type:", typeof userId);
+      console.log("💳 Full Req.user object:", (req as any).user);
+      console.log("💳 Booking ID:", booking._id);
+      console.log("💳 Room details:", {
+        roomName: room?.name,
+        roomType,
+        nightlyPrice: roomPrice,
+        nights,
+      });
+      console.log("💳 Pricing:", { totalPrice, tax, finalAmount });
+
+      // Generate billNumber
+      const timestamp = Date.now().toString().slice(-6);
+      const bookingIdLast6 = booking._id.toString().slice(-6);
+      const billNumber = `HD-${new Date().getFullYear()}-${timestamp}-${bookingIdLast6}`;
+      console.log("💳 Generated billNumber:", billNumber);
+
+      const bill = await Bill.create({
+        billNumber: billNumber,
+        booking: booking._id,
+        user: userId,
+        customerInfo: {
+          fullName,
+          email,
+          phone,
+        },
+        roomInfo: {
+          roomId: room?._id,
+          roomName: room?.name || roomType || "Standard Room",
+          roomType: room?.type || roomType || "Standard",
+          nightlyPrice: roomPrice,
+        },
+        bookingDetails: {
+          roomName: room?.name || roomType || "Standard Room",
+          roomType: room?.type || roomType || "Standard",
+          nightlyPrice: roomPrice,
+          nights,
+          guests,
+          checkIn: checkInDate,
+          checkOut: checkOutDate,
+          specialRequests,
+        },
+        checkIn: checkInDate,
+        checkOut: checkOutDate,
+        nights,
+        guests,
+        roomPrice,
+        totalPrice,
+        discount: 0,
+        tax,
+        finalAmount,
+        paymentMethod: paymentMethod === "deposit" ? "deposit" : "full",
+        paymentStatus: paymentMethod === "deposit" ? "unpaid" : "paid",
+        specialRequests,
+        status: "active",
+        issuedDate: new Date(),
+      });
+
+      createdBill = await Bill.findById(bill._id)
+        .populate("booking")
+        .populate("user", "fullName email")
+        .populate("roomInfo.roomId");
+
+      console.log("✅ Bill created successfully:", {
+        billId: createdBill?._id,
+        billNumber: createdBill?.billNumber,
+        userId: createdBill?.user,
+        userIdString: String(createdBill?.user),
+        roomName: createdBill?.bookingDetails?.roomName,
+        totalPrice: createdBill?.totalPrice,
+      });
+      console.log("💳 ============= Creating Bill END =============\n");
+    } catch (billError) {
+      console.error("❌ Failed to create bill:", billError);
+      console.log("💳 ============= Creating Bill END (ERROR) =============\n");
+    }
+
     res
       .status(201)
-      .json(successResponse(populatedBooking, "Booking created successfully"));
+      .json(
+        successResponse(
+          { booking: populatedBooking, bill: createdBill },
+          "Booking and bill created successfully"
+        )
+      );
   } catch (error) {
     next(error);
   }

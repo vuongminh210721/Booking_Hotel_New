@@ -1,0 +1,1686 @@
+import { useState, useEffect, useCallback } from "react";
+import { Receipt, X, ArrowLeft, Trash2 } from "lucide-react";
+import { useAuth } from "@/context/AuthContext";
+
+// For any future static QR code fallback if needed
+// const QR_CODE_IMAGE = qrPaymentImage;
+
+interface Bill {
+   _id: string;
+   billNumber: string;
+   customerInfo: {
+      fullName: string;
+      email: string;
+      phone: string;
+   };
+   roomInfo: {
+      roomName: string;
+      roomType: string;
+      nightlyPrice: number;
+   };
+   checkIn: string;
+   checkOut: string;
+   nights: number;
+   guests: number;
+   totalPrice: number;
+   tax: number;
+   finalAmount: number;
+   paymentMethod: string;
+   paymentStatus: "paid" | "unpaid" | "partial";
+   status: "active" | "cancelled" | "refunded";
+   issuedDate: string;
+   bookingDetails?: {
+      roomName: string;
+      roomType: string;
+      nightlyPrice: number;
+      nights: number;
+      guests: number;
+      checkIn: string;
+      checkOut: string;
+      specialRequests?: string;
+   };
+}
+
+interface ExtraItem {
+   id: string;
+   type: 'service' | 'food';
+   title: string;
+   price: number;
+   quantity: number;
+   image?: string;
+}
+
+const FloatingBills = () => {
+   const [isOpen, setIsOpen] = useState(false);
+   const [bills, setBills] = useState<Bill[]>([]);
+   const [loading, setLoading] = useState(false);
+   const [hasNewBill, setHasNewBill] = useState(false);
+   const [selectedGroup, setSelectedGroup] = useState<any>(null);
+   const [activeTab, setActiveTab] = useState<'bills' | 'payment'>('bills');
+   const [extras, setExtras] = useState<ExtraItem[]>([]);
+   const [recentlyAdded, setRecentlyAdded] = useState<Record<string, boolean>>({});
+   const { user } = useAuth();
+   const API_BASE_URL = import.meta.env.VITE_API_URL || "/api";
+
+   // Hydrate from last cached bill in case network fetch is slow/empty
+   useEffect(() => {
+      try {
+         // Prefer the full cached bills list, then fall back to last_bill
+         const deletedRaw = localStorage.getItem('deleted_bills');
+         const deletedList: string[] = deletedRaw ? JSON.parse(deletedRaw) : [];
+
+         const cachedBillsRaw = localStorage.getItem("bills_cache");
+         if (cachedBillsRaw) {
+            const cachedBills = JSON.parse(cachedBillsRaw) as any[];
+            const filtered = cachedBills.filter(b => !deletedList.includes(b._id || b.billNumber));
+            if (filtered && filtered.length > 0) {
+               console.log("💾 Loaded cached bills_cache from localStorage (filtered deleted)");
+               setBills(filtered);
+               return;
+            }
+         }
+
+         const last = localStorage.getItem("last_bill");
+         if (last) {
+            const bill = JSON.parse(last);
+            if (bill && bill.billNumber && !deletedList.includes(bill._id || bill.billNumber)) {
+               console.log("💾 Loaded cached last_bill from localStorage");
+               setBills([bill]);
+            }
+         }
+      } catch (err) {
+         console.warn("⚠️ Could not load cached bill(s):", err);
+      }
+   }, []);
+
+   // Save bills to localStorage whenever they change
+   useEffect(() => {
+      try {
+         if (bills.length > 0) {
+            localStorage.setItem("bills_cache", JSON.stringify(bills));
+            console.log("💾 Saved", bills.length, "bills to localStorage");
+         } else {
+            localStorage.removeItem("bills_cache");
+            console.log("🗑️ Cleared bills cache from localStorage");
+         }
+      } catch (err) {
+         console.warn("⚠️ Could not save bills to localStorage:", err);
+      }
+   }, [bills]);
+
+   // Define fetchBills first so it can be used in useEffect
+   const fetchBills = useCallback(async () => {
+      setLoading(true);
+      try {
+         const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+         console.log("🔑 Token found:", token ? "Yes" : "No");
+         if (!token) {
+            setBills([]);
+            setLoading(false);
+            console.warn("❌ No auth token found. Bills require login.");
+            return;
+         }
+
+         const url = `${API_BASE_URL}/bills/my-bills?t=${Date.now()}`;
+         console.log("🔄 Fetching bills from:", url, "with token:", token.substring(0, 20) + "...");
+         const response = await fetch(url, {
+            headers: {
+               Authorization: `Bearer ${token}`,
+               "Cache-Control": "no-cache",
+            },
+         });
+
+         console.log("📊 Response status:", response.status, response.statusText);
+
+         if (!response.ok) {
+            const errorText = await response.text();
+            console.error("❌ Bills API returned non-OK:", response.status, response.statusText, errorText);
+            // Load from cache if API fails
+            try {
+               const cached = localStorage.getItem("bills_cache");
+               if (cached) {
+                  const cachedBills = JSON.parse(cached);
+                  console.log("💾 Loading from cache due to API failure:", cachedBills.length, "bills");
+                  setBills(cachedBills);
+               } else {
+                  setBills([]);
+               }
+            } catch {
+               setBills([]);
+            }
+            setLoading(false);
+            return;
+         }
+
+         const data = await response.json();
+         console.log("📡 Raw API response:", data);
+
+         // Support multiple response shapes
+         console.log("\n📋 ============= Parsing Bills Response =============");
+         let billsData: any[] = [];
+         if (Array.isArray(data)) {
+            billsData = data;
+            console.log("✅ Response is direct array, found", billsData.length, "bills");
+         } else if (Array.isArray(data?.data)) {
+            billsData = data.data;
+            console.log("✅ Response.data is array, found", billsData.length, "bills");
+         } else if (Array.isArray(data?.bills)) {
+            billsData = data.bills;
+            console.log("✅ Response.bills is array, found", billsData.length, "bills");
+         } else if (Array.isArray(data?.result)) {
+            billsData = data.result;
+            console.log("✅ Response.result is array, found", billsData.length, "bills");
+         } else if (data?.success && Array.isArray(data?.data)) {
+            billsData = data.data;
+            console.log("✅ Response is success wrapper with data array, found", billsData.length, "bills");
+         } else {
+            console.warn("⚠️ Could not parse bills array from response");
+            console.warn("  Response keys:", Object.keys(data));
+            console.warn("  Response structure:", JSON.stringify(data, null, 2));
+            billsData = [];
+         }
+
+         console.log(`📋 Total bills to process: ${billsData.length}`);
+         if (billsData.length > 0) {
+            billsData.forEach((bill: any, idx: number) => {
+               console.log(`  Bill ${idx + 1}:`, {
+                  billId: bill._id,
+                  billNumber: bill.billNumber,
+                  roomName: bill.bookingDetails?.roomName || bill.roomInfo?.roomName,
+                  finalAmount: bill.finalAmount || bill.totalPrice,
+               });
+            });
+         }
+         console.log("📋 =============================================\n");
+
+         console.log("📋 Final parsed bills:", billsData.length, "bills");
+
+         // Filter out any bills the user deleted locally so they don't reappear
+         try {
+            const deleted = localStorage.getItem('deleted_bills');
+            const deletedList: string[] = deleted ? JSON.parse(deleted) : [];
+            if (deletedList && deletedList.length > 0) {
+               const before = billsData.length;
+               billsData = billsData.filter((b: any) => !deletedList.includes(b._id || b.billNumber));
+               console.log(`🔕 Filtered out ${before - billsData.length} deleted bill(s) from server results`);
+            }
+         } catch (err) {
+            // ignore
+         }
+
+         // Merge with locally deleted bills - keep local state
+         const cachedBills = localStorage.getItem("bills_cache");
+         if (cachedBills) {
+            try {
+               const localBills = JSON.parse(cachedBills);
+               const localBillIds = new Set(localBills.map((b: any) => b._id || b.billNumber));
+               // Only keep server bills that exist in local cache (user hasn't deleted them)
+               const mergedBills = billsData.filter((b: any) => localBillIds.has(b._id || b.billNumber));
+               console.log("🔄 Merged with local cache:", mergedBills.length, "bills (filtered from", billsData.length, "server bills)");
+               setBills(mergedBills);
+            } catch {
+               setBills(billsData);
+            }
+         } else {
+            setBills(billsData);
+         }
+      } catch (error) {
+         console.error("❌ Error fetching bills:", error);
+         // Load from cache if fetch fails
+         try {
+            const cached = localStorage.getItem("bills_cache");
+            if (cached) {
+               const cachedBills = JSON.parse(cached);
+               console.log("💾 Loading from cache due to error:", cachedBills.length, "bills");
+               setBills(cachedBills);
+            } else {
+               setBills([]);
+            }
+         } catch {
+            setBills([]);
+         }
+      } finally {
+         setLoading(false);
+      }
+   }, [API_BASE_URL]);
+
+   useEffect(() => {
+      if (isOpen && user) {
+         fetchBills();
+      }
+   }, [isOpen, user, fetchBills]);
+
+   // Listen for bookingCreated to refresh bills and show green dot
+   useEffect(() => {
+      const handler = (e: any) => {
+         setHasNewBill(true);
+         console.log("📦 bookingCreated event received, detail:", e?.detail);
+
+         // If the event includes a bill object (various shapes), extract it and insert immediately
+         try {
+            let detail = e?.detail;
+            if (!detail) detail = {};
+
+            console.log("Step 1 - Initial detail:", detail);
+
+            // Unwrap common wrappers
+            if (detail.data) detail = detail.data;
+            console.log("Step 2 - After unwrap data:", detail);
+
+            // At this point detail might be: { bill } or { booking, bill } or the bill object itself
+            let candidate: any = null;
+            if (detail.bill) {
+               candidate = detail.bill;
+               console.log("Step 3a - Found bill at detail.bill:", candidate);
+            } else if (detail?.booking && detail?.booking._id && detail?.user === undefined && detail?.roomInfo === undefined && detail?.finalAmount === undefined) {
+               candidate = detail;
+               console.log("Step 3b - Found booking structure:", candidate);
+            } else {
+               candidate = detail;
+               console.log("Step 3c - Using detail as candidate:", candidate);
+            }
+
+            // If candidate still contains nested shapes, try deeper unwrapping
+            if (candidate && candidate.data) candidate = candidate.data;
+            if (candidate && candidate.bill) candidate = candidate.bill;
+
+            console.log("Step 4 - Final candidate:", candidate);
+
+            // Now candidate should be a bill-like object
+            // Check for bill characteristics: billNumber, roomInfo, customerInfo, or finalAmount
+            let isBillLike = candidate && (
+               candidate._id ||
+               candidate.billNumber ||
+               candidate.finalAmount ||
+               (candidate.roomInfo && candidate.customerInfo) ||
+               (candidate.bookingDetails && candidate.tax)
+            );
+
+            console.log("Step 5 - Is bill-like:", isBillLike);
+
+            // If the candidate is actually a booking-like object (from Booking_Home fallback),
+            // construct a bill-like object so the modal can immediately display room info.
+            if (!isBillLike && candidate && (candidate.booking || candidate.bookingDetails || candidate.roomName || candidate.roomInfo)) {
+               try {
+                  console.log("ℹ️ Candidate looks like a booking — constructing bill object for immediate display");
+                  const booking = candidate.booking || candidate;
+
+                  const generatedId = booking._id ? `temp-${booking._id}` : `temp-${Date.now()}`;
+                  const nightly = Number(booking.nightlyPrice || booking.nightlyPriceFormatted || booking.roomPrice || booking.totalPrice || 0) || 0;
+                  const nights = Number(booking.nights || booking.duration || 1) || 1;
+                  const totalPrice = Number(booking.totalPrice || (nightly * nights)) || 0;
+                  const tax = Math.round(totalPrice * 0.08);
+                  const finalAmount = totalPrice + tax;
+
+                  const built: any = {
+                     _id: generatedId,
+                     billNumber: booking.billNumber || `HD-${String(booking._id || generatedId).slice(-6)}`,
+                     customerInfo: {
+                        fullName: booking.fullName || booking.customerName || (user?.fullName ?? "Khách hàng"),
+                        email: booking.email || user?.email || "",
+                        phone: booking.phone || user?.phone || "",
+                     },
+                     roomInfo: {
+                        roomName: booking.roomName || booking.room?.name || (booking.roomInfo && booking.roomInfo.roomName) || booking.roomType || "Phòng tiêu chuẩn",
+                        roomType: booking.roomType || booking.room?.type || (booking.roomInfo && booking.roomInfo.roomType) || "Standard",
+                        nightlyPrice: nightly,
+                     },
+                     bookingDetails: {
+                        roomName: booking.roomName || booking.room?.name || booking.roomType,
+                        roomType: booking.roomType || booking.room?.type,
+                        nightlyPrice: nightly,
+                        nights: nights,
+                        guests: booking.guests || booking.adults || 1,
+                        checkIn: booking.checkIn || booking.startDate || new Date().toISOString(),
+                        checkOut: booking.checkOut || booking.endDate || new Date().toISOString(),
+                        specialRequests: booking.specialRequests || booking.note || "",
+                     },
+                     checkIn: booking.checkIn || booking.startDate,
+                     checkOut: booking.checkOut || booking.endDate,
+                     nights,
+                     guests: booking.guests || booking.adults || 1,
+                     totalPrice,
+                     tax,
+                     discount: booking.discount || 0,
+                     finalAmount,
+                     paymentMethod: booking.paymentMethod || "deposit",
+                     paymentStatus: booking.paymentMethod === "deposit" ? "unpaid" : "paid",
+                     status: "active",
+                     issuedDate: new Date().toISOString(),
+                  };
+
+                  candidate = built;
+                  isBillLike = true;
+                  console.log("✅ Built bill candidate:", built);
+               } catch (err) {
+                  console.warn("⚠️ Failed to build bill from booking candidate:", err);
+               }
+            }
+
+            if (isBillLike) {
+               const idKey = candidate._id || candidate.billNumber;
+               // Do not re-insert bills the user deleted locally
+               try {
+                  const rawDeleted = localStorage.getItem('deleted_bills');
+                  const deletedList: string[] = rawDeleted ? JSON.parse(rawDeleted) : [];
+                  if (deletedList.includes(idKey)) {
+                     console.log('🔕 Candidate bill was deleted locally, skipping insert:', idKey);
+                  } else {
+                     console.log("✅ Inserting bill into state:", candidate);
+                     setBills((prev) => {
+                        const exists = prev.some(b =>
+                           (b._id && candidate._id && b._id === candidate._id) ||
+                           (b.billNumber && candidate.billNumber && b.billNumber === candidate.billNumber)
+                        );
+                        if (exists) {
+                           console.log("⚠️ Bill already exists, skipping");
+                           return prev;
+                        }
+                        console.log("➕ Adding new bill to state");
+                        return [candidate as any, ...prev];
+                     });
+                  }
+               } catch (err) {
+                  console.warn('⚠️ Could not check deleted_bills, inserting by default');
+                  setBills((prev) => {
+                     const exists = prev.some(b =>
+                        (b._id && candidate._id && b._id === candidate._id) ||
+                        (b.billNumber && candidate.billNumber && b.billNumber === candidate.billNumber)
+                     );
+                     if (exists) return prev;
+                     return [candidate as any, ...prev];
+                  });
+               }
+            } else {
+               console.warn("❌ Candidate does not look like a bill:", candidate);
+            }
+         } catch (err) {
+            console.warn('Could not insert returned bill from event:', err);
+         }
+
+         // Refresh bills list in background to ensure server state is authoritative
+         console.log("🔄 Fetching bills in background...");
+         fetchBills();
+      };
+      window.addEventListener("bookingCreated", handler);
+      return () => window.removeEventListener("bookingCreated", handler);
+   }, [fetchBills]);
+
+   // Listen for explicit request to open bills modal (e.g., after booking)
+   useEffect(() => {
+      const openHandler = (e: any) => {
+         console.log("📢 openBills event received, detail:", e?.detail);
+         setHasNewBill(true);
+         setIsOpen(true);
+         // If the open event includes booking/bill detail, try to insert it immediately
+         try {
+            const detail = e?.detail || {};
+            if (detail) {
+               console.log("📢 openBills detail present, attempting to insert into state:", detail);
+
+               // Attempt to reuse same candidate/build logic as bookingCreated
+               let candidate: any = null;
+               if (detail.bill) candidate = detail.bill;
+               else candidate = detail.raw || detail;
+
+               if (candidate && candidate.data) candidate = candidate.data;
+               if (candidate && candidate.bill) candidate = candidate.bill;
+
+               // If candidate looks like booking, build a bill-like object
+               const isBillLike = candidate && (
+                  candidate._id || candidate.billNumber || candidate.finalAmount || (candidate.roomInfo && candidate.customerInfo) || (candidate.bookingDetails && candidate.tax)
+               );
+
+               if (!isBillLike && candidate && (candidate.booking || candidate.bookingDetails || candidate.roomName || candidate.roomInfo)) {
+                  try {
+                     const booking = candidate.booking || candidate;
+                     const generatedId = booking._id ? `temp-${booking._id}` : `temp-${Date.now()}`;
+                     const nightly = Number(booking.nightlyPrice || booking.roomPrice || booking.totalPrice || 0) || 0;
+                     const nights = Number(booking.nights || 1) || 1;
+                     const totalPrice = Number(booking.totalPrice || (nightly * nights)) || 0;
+                     const tax = Math.round(totalPrice * 0.08);
+                     const finalAmount = totalPrice + tax;
+                     const built: any = {
+                        _id: generatedId,
+                        billNumber: booking.billNumber || `HD-${String(booking._id || generatedId).slice(-6)}`,
+                        customerInfo: {
+                           fullName: booking.fullName || (user?.fullName ?? "Khách hàng"),
+                           email: booking.email || user?.email || "",
+                           phone: booking.phone || user?.phone || "",
+                        },
+                        roomInfo: {
+                           roomName: booking.roomName || booking.room?.name || booking.roomType || "Phòng tiêu chuẩn",
+                           roomType: booking.roomType || booking.room?.type || "Standard",
+                           nightlyPrice: nightly,
+                        },
+                        bookingDetails: {
+                           roomName: booking.roomName || booking.room?.name || booking.roomType,
+                           roomType: booking.roomType || booking.room?.type,
+                           nightlyPrice: nightly,
+                           nights,
+                           guests: booking.guests || 1,
+                           checkIn: booking.checkIn || booking.startDate || new Date().toISOString(),
+                           checkOut: booking.checkOut || booking.endDate || new Date().toISOString(),
+                           specialRequests: booking.specialRequests || "",
+                        },
+                        checkIn: booking.checkIn || booking.startDate,
+                        checkOut: booking.checkOut || booking.endDate,
+                        nights,
+                        guests: booking.guests || 1,
+                        totalPrice,
+                        tax,
+                        discount: booking.discount || 0,
+                        finalAmount,
+                        paymentMethod: booking.paymentMethod || "deposit",
+                        paymentStatus: booking.paymentMethod === "deposit" ? "unpaid" : "paid",
+                        status: "active",
+                        issuedDate: new Date().toISOString(),
+                     };
+
+                     console.log("📢 openBills inserting built bill:", built);
+                     try {
+                        const idKey = built._id || built.billNumber;
+                        const rawDeleted = localStorage.getItem('deleted_bills');
+                        const deletedList: string[] = rawDeleted ? JSON.parse(rawDeleted) : [];
+                        if (deletedList.includes(idKey)) {
+                           console.log('🔕 openBills: built bill was deleted locally, skipping insert:', idKey);
+                        } else {
+                           setBills((prev) => {
+                              const exists = prev.some(b =>
+                                 (b._id && built._id && b._id === built._id) ||
+                                 (b.billNumber && built.billNumber && b.billNumber === built.billNumber)
+                              );
+                              if (exists) return prev;
+                              return [built as any, ...prev];
+                           });
+                        }
+                     } catch (err) {
+                        console.warn('⚠️ openBills failed checking deleted_bills, inserting by default');
+                        setBills((prev) => [built as any, ...prev]);
+                     }
+                  } catch (err) {
+                     console.warn("⚠️ openBills failed to build bill from detail:", err);
+                  }
+               }
+            }
+         } catch (err) {
+            console.warn("⚠️ Error processing openBills detail:", err);
+         }
+         // Fetch bills after modal opens to ensure state is updated
+         setTimeout(() => {
+            console.log("🔄 Fetching bills after modal opens...");
+            fetchBills();
+         }, 100);
+      };
+      window.addEventListener("openBills", openHandler);
+      return () => window.removeEventListener("openBills", openHandler);
+   }, [fetchBills]);
+
+   // Monitor bills state - when all bills deleted, clear extras
+   useEffect(() => {
+      if (bills.length === 0 && extras.length > 0) {
+         console.log('🗑️ All bills deleted, clearing extras and selectedGroup');
+         setExtras([]);
+         setSelectedGroup(null);
+      }
+   }, [bills]);
+
+   // Listen for service/food selection from Service and Food pages
+   useEffect(() => {
+      const handleServiceSelect = (e: any) => {
+         console.log("🎯 Service selected:", e?.detail);
+         const service = e?.detail;
+         if (service && service.title && service.price) {
+            const priceValue = parseInt(service.price.replace(/[^\d]/g, '')) || 0;
+            const newItem: ExtraItem = {
+               id: `service-${Date.now()}-${Math.random()}`,
+               type: 'service',
+               title: service.title,
+               price: priceValue,
+               quantity: 1,
+               image: service.img
+            };
+            setExtras(prev => {
+               const existing = prev.find(item => item.title === service.title && item.type === 'service');
+               if (existing) {
+                  return prev.map(item =>
+                     item.title === service.title && item.type === 'service'
+                        ? { ...item, quantity: item.quantity + 1 }
+                        : item
+                  );
+               }
+               return [...prev, newItem];
+            });
+            setIsOpen(true);
+            setActiveTab('bills');  // Stay on bills tab
+            setHasNewBill(true);
+         }
+      };
+
+      const handleFoodSelect = (e: any) => {
+         console.log("🍽️ Food selected:", e?.detail);
+         const food = e?.detail;
+         if (food && food.title && food.price) {
+            const priceValue = parseInt(food.price.replace(/[^\d]/g, '')) || 0;
+            const newItem: ExtraItem = {
+               id: `food-${Date.now()}-${Math.random()}`,
+               type: 'food',
+               title: food.title,
+               price: priceValue,
+               quantity: 1,
+               image: food.images?.[0] || food.img
+            };
+            setExtras(prev => {
+               const existing = prev.find(item => item.title === food.title && item.type === 'food');
+               if (existing) {
+                  return prev.map(item =>
+                     item.title === food.title && item.type === 'food'
+                        ? { ...item, quantity: item.quantity + 1 }
+                        : item
+                  );
+               }
+               return [...prev, newItem];
+            });
+            setIsOpen(true);
+            setActiveTab('bills');  // Stay on bills tab instead of switching to extras
+            setHasNewBill(true);
+         }
+      };
+
+      window.addEventListener("selectService", handleServiceSelect);
+      window.addEventListener("selectFood", handleFoodSelect);
+
+      return () => {
+         window.removeEventListener("selectService", handleServiceSelect);
+         window.removeEventListener("selectFood", handleFoodSelect);
+      };
+   }, []);
+
+   // On mount, consume any queued extras saved by other pages (e.g., Food page)
+   useEffect(() => {
+      try {
+         const raw = localStorage.getItem('queued_extras');
+         if (!raw) return;
+         const queued: Array<any> = JSON.parse(raw);
+         if (!Array.isArray(queued) || queued.length === 0) return;
+
+         // Add each queued item as a service (mirror handleServiceSelect behaviour)
+         setExtras(prev => {
+            const next = [...prev];
+            queued.forEach(q => {
+               try {
+                  const priceValue = parseInt((q.price || '').toString().replace(/[^\d]/g, '')) || 0;
+                  const existing = next.find(item => item.title === q.title && item.type === 'service');
+                  if (existing) {
+                     existing.quantity = existing.quantity + 1;
+                  } else {
+                     next.push({
+                        id: `queued-${Date.now()}-${Math.random()}`,
+                        type: 'service',
+                        title: q.title,
+                        price: priceValue,
+                        quantity: 1,
+                        image: q.img
+                     });
+                  }
+               } catch (err) {
+                  // ignore parse errors per item
+               }
+            });
+            return next;
+         });
+
+         // Clear the queue after consuming
+         localStorage.removeItem('queued_extras');
+
+         // Open modal and switch to bills tab to show the added extras
+         setIsOpen(true);
+         setActiveTab('bills');
+         setHasNewBill(true);
+      } catch (err) {
+         // ignore
+      }
+   }, []);
+
+   const formatDate = (dateString: string) => {
+      return new Date(dateString).toLocaleDateString("vi-VN", {
+         day: "2-digit",
+         month: "2-digit",
+         year: "numeric",
+      });
+   };
+
+   const formatCurrency = (amount: number) => {
+      return new Intl.NumberFormat("vi-VN", {
+         style: "currency",
+         currency: "VND",
+      }).format(amount);
+   };
+
+   // Payment polling state
+   const [paymentPollingActive, setPaymentPollingActive] = useState(false);
+   const [paymentSuccess, setPaymentSuccess] = useState(false);
+   const [paymentMessage, setPaymentMessage] = useState<string | null>(null);
+   const [countdownSeconds, setCountdownSeconds] = useState(300); // 5 minutes
+   const [qrData, setQrData] = useState<any>(null);
+
+   const getStatusColor = (status: string) => {
+      switch (status) {
+         case "active":
+            return "bg-green-100 text-green-800";
+         case "cancelled":
+            return "bg-red-100 text-red-800";
+         case "refunded":
+            return "bg-yellow-100 text-yellow-800";
+         default:
+            return "bg-gray-100 text-gray-800";
+      }
+   };
+
+   const getPaymentStatusColor = (status: string) => {
+      switch (status) {
+         case "paid":
+            return "bg-green-100 text-green-800";
+         case "unpaid":
+            return "bg-red-100 text-red-800";
+         case "partial":
+            return "bg-yellow-100 text-yellow-800";
+         default:
+            return "bg-gray-100 text-gray-800";
+      }
+   };
+
+   const getStatusText = (status: string) => {
+      switch (status) {
+         case "active": return "Hoạt động";
+         case "cancelled": return "Đã hủy";
+         case "refunded": return "Đã hoàn tiền";
+         default: return status;
+      }
+   };
+
+   const getPaymentStatusText = (status: string) => {
+      switch (status) {
+         case "paid": return "Đã thanh toán";
+         case "unpaid": return "Chưa thanh toán";
+         case "partial": return "Thanh toán 1 phần";
+         default: return status;
+      }
+   };
+
+   // Poll bill status while on Payment tab
+   useEffect(() => {
+      let interval: any = null;
+      let isCancelled = false;
+
+      const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+      if (!token) return;
+
+      const getBillIdsToPoll = () => {
+         if (selectedGroup && Array.isArray(selectedGroup.bills) && selectedGroup.bills.length > 0) {
+            return selectedGroup.bills.map((b: any) => b._id || b.billNumber).filter(Boolean) as string[];
+         }
+         return bills.map((b: any) => b._id || b.billNumber).filter(Boolean) as string[];
+      };
+
+      const pollOnce = async (ids: string[]) => {
+         try {
+            const base = API_BASE_URL.replace(/\/+$/, "");
+            let allPaid = true;
+            let anyPaid = false;
+            let anyPartial = false;
+
+            for (const id of ids) {
+               try {
+                  const resp = await fetch(`${base}/bills/${id}/status`, {
+                     headers: {
+                        Authorization: `Bearer ${token}`,
+                        'Cache-Control': 'no-cache'
+                     }
+                  });
+                  if (!resp.ok) {
+                     allPaid = false;
+                     continue;
+                  }
+                  const json = await resp.json();
+                  const s = (json?.data?.paymentStatus as string) || 'unpaid';
+                  if (s === 'paid') {
+                     anyPaid = true;
+                  } else if (s === 'partial') {
+                     anyPartial = true;
+                     allPaid = false;
+                  } else {
+                     allPaid = false;
+                  }
+               } catch (err) {
+                  console.warn('Poll error for', id, err);
+                  allPaid = false;
+               }
+            }
+            if (isCancelled) return;
+
+            if (allPaid) {
+               setPaymentSuccess(true);
+               setPaymentMessage('✅ Thanh toán thành công');
+               setPaymentPollingActive(false);
+
+               // Remove paid bills from state
+               const idsSet = new Set(ids);
+               setBills(prev => prev.filter(b => !idsSet.has(b._id) && !idsSet.has(b.billNumber)));
+
+               // Clear deleted bills from localStorage if needed
+               try {
+                  const rawDeleted = localStorage.getItem('deleted_bills');
+                  const deletedList: string[] = rawDeleted ? JSON.parse(rawDeleted) : [];
+                  const newDeletedList = [...deletedList, ...ids];
+                  localStorage.setItem('deleted_bills', JSON.stringify(newDeletedList));
+               } catch (err) {
+                  console.warn('Could not update deleted_bills', err);
+               }
+
+               setTimeout(() => fetchBills(), 300);
+               setTimeout(() => {
+                  setIsOpen(false);
+                  setActiveTab('bills');
+                  setSelectedGroup(null);
+                  setExtras([]);
+                  setPaymentSuccess(false);
+                  setPaymentMessage(null);
+               }, 1500);
+            } else if (anyPaid) {
+               setPaymentMessage('⚠️ Một phần thanh toán đã được xác nhận');
+            } else if (anyPartial) {
+               setPaymentMessage('❌ Số tiền chuyển không đủ');
+            } else {
+               setPaymentMessage('⏳ Đang chờ xác nhận từ ngân hàng...');
+            }
+         } catch (err) {
+            console.warn('Polling failed', err);
+         }
+      };
+
+      if (isOpen && activeTab === 'payment' && paymentPollingActive) {
+         const ids = getBillIdsToPoll();
+         if (ids.length === 0) return;
+         pollOnce(ids);
+         interval = setInterval(() => pollOnce(ids), 3000);
+      }
+
+      return () => {
+         isCancelled = true;
+         if (interval) clearInterval(interval);
+      };
+   }, [isOpen, activeTab, paymentPollingActive, selectedGroup, bills, API_BASE_URL, fetchBills]);
+
+   // Countdown timer - decrements when payment is active
+   useEffect(() => {
+      let countdownInterval: any = null;
+
+      if (isOpen && activeTab === 'payment' && paymentPollingActive && countdownSeconds > 0) {
+         countdownInterval = setInterval(() => {
+            setCountdownSeconds(prev => {
+               const newVal = prev - 1;
+               if (newVal <= 0) {
+                  setPaymentMessage('❌ Hết thời gian thanh toán (5 phút)');
+                  setPaymentPollingActive(false);
+               }
+               return newVal;
+            });
+         }, 1000);
+      }
+
+      return () => {
+         if (countdownInterval) clearInterval(countdownInterval);
+      };
+   }, [isOpen, activeTab, paymentPollingActive]);
+
+   // Fetch QR code data when entering payment tab
+   useEffect(() => {
+      const fetchQRData = async () => {
+         try {
+            const token = localStorage.getItem('auth_token') || localStorage.getItem('token');
+            if (!token) return;
+
+            const getIds = () => {
+               if (selectedGroup && Array.isArray(selectedGroup.bills) && selectedGroup.bills.length > 0) {
+                  return selectedGroup.bills.map((b: any) => b._id || b.billNumber).filter(Boolean) as string[];
+               }
+               return bills.map((b: any) => b._id || b.billNumber).filter(Boolean) as string[];
+            };
+
+            const ids = getIds();
+            if (ids.length === 0) return;
+
+            // Use first bill ID for QR
+            const billId = ids[0];
+            const base = API_BASE_URL.replace(/\/+$/, '');
+            // Construct direct URL to VietQR image (endpoint redirects to it)
+            const qrUrl = `${base}/webhooks/qr/${billId}`;
+            setQrData(qrUrl);
+         } catch (err) {
+            console.warn('Failed to fetch QR data:', err);
+         }
+      };
+
+      if (isOpen && activeTab === 'payment') {
+         setCountdownSeconds(300); // Reset countdown
+         fetchQRData();
+         setPaymentPollingActive(true);
+      } else {
+         setPaymentPollingActive(false);
+      }
+   }, [isOpen, activeTab, selectedGroup, bills, API_BASE_URL]);
+
+   // Group bills by date (same day bookings grouped together)
+   const groupBillsByDate = (billsList: Bill[]) => {
+      const groups: { [key: string]: Bill[] } = {};
+
+      billsList.forEach(bill => {
+         const date = new Date(bill.issuedDate).toDateString();
+         if (!groups[date]) {
+            groups[date] = [];
+         }
+         groups[date].push(bill);
+      });
+
+      return Object.entries(groups).map(([date, groupBills]) => ({
+         date,
+         bills: groupBills,
+         totalAmount: groupBills.reduce((sum, b) => sum + (b.finalAmount || 0), 0),
+         totalRooms: groupBills.length,
+      }));
+   };
+
+   // Only show when user is logged in
+   if (!user) return null;
+
+   return (
+      <>
+         {/* Floating Button */}
+         <button
+            onClick={() => {
+               console.log("🔔 Bill icon clicked!");
+               console.log("Current state - isOpen:", isOpen, "bills.length:", bills.length, "loading:", loading);
+               setIsOpen(true);
+               setHasNewBill(false);
+               fetchBills();
+            }}
+            className="fixed bottom-6 right-6 bg-[#2fd680] text-white p-4 rounded-full shadow-lg hover:shadow-2xl hover:bg-[#25a060] transition-all hover:scale-110 z-40"
+            title="Hóa đơn của tôi"
+         >
+            <Receipt className="w-6 h-6" />
+            {/* Green dot indicator when a new bill is created */}
+            {hasNewBill && (
+               <span className="absolute -bottom-1 left-1 w-3 h-3 bg-green-500 rounded-full ring-2 ring-white" aria-label="Có hóa đơn mới" />
+            )}
+            {bills.length > 0 && (
+               <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
+                  {bills.length}
+               </span>
+            )}
+         </button>
+
+         {/* Modal */}
+         {isOpen && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4 pt-20">
+               <div className="bg-white rounded-lg shadow-xl max-w-3xl w-full max-h-[85vh] overflow-hidden flex flex-col">
+                  {/* Header */}
+                  <div className="border-b">
+                     <div className="flex items-center justify-between p-4">
+                        <div className="flex-1">
+                           <h2 className="text-xl font-bold text-gray-900">Quản lý hóa đơn</h2>
+                           <p className="text-gray-600 text-sm">Xem và thanh toán hóa đơn của bạn</p>
+                        </div>
+                        <button
+                           onClick={() => {
+                              setIsOpen(false);
+                              setActiveTab('bills');
+                              setSelectedGroup(null);
+                           }}
+                           className="p-2 hover:bg-gray-100 rounded-full transition-colors"
+                        >
+                           <X className="w-6 h-6" />
+                        </button>
+                     </div>
+                     {/* Tabs */}
+                     <div className="flex border-t">
+                        <button
+                           onClick={() => {
+                              setActiveTab('bills');
+                              setSelectedGroup(null);
+                           }}
+                           className={`flex-1 py-3 px-4 font-medium transition-colors border-b-2 ${activeTab === 'bills'
+                              ? 'border-[#2fd680] text-[#2fd680] bg-teal-50'
+                              : 'border-transparent text-gray-600 hover:bg-gray-50'
+                              }`}
+                        >
+                           Hóa đơn của tôi
+                        </button>
+                        <button
+                           onClick={() => setActiveTab('payment')}
+                           disabled={bills.length === 0 || (!selectedGroup && extras.length === 0)}
+                           className={`flex-1 py-3 px-4 font-medium transition-colors border-b-2 ${activeTab === 'payment'
+                              ? 'border-[#2fd680] text-[#2fd680] bg-teal-50'
+                              : 'border-transparent text-gray-600 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed'
+                              }`}
+                        >
+                           Thanh toán
+                        </button>
+                     </div>
+                  </div>
+
+                  {/* Content */}
+                  <div className="flex-1 overflow-y-auto p-4">
+                     {activeTab === 'bills' && (
+                        <>
+                           {loading ? (
+                              <div className="flex items-center justify-center py-12">
+                                 <div className="text-lg text-gray-600">Đang tải...</div>
+                              </div>
+                           ) : bills.length === 0 ? (
+                              <div className="text-center py-12">
+                                 <Receipt className="w-16 h-16 mx-auto text-gray-300 mb-4" />
+                                 <h3 className="text-xl font-semibold mb-2">Chưa có hóa đơn</h3>
+                                 <p className="text-gray-600">
+                                    {(localStorage.getItem("auth_token") || localStorage.getItem("token"))
+                                       ? "Bạn chưa đặt phòng nào. Hãy đặt phòng ngay để nhận hóa đơn!"
+                                       : "Bạn chưa đăng nhập. Vui lòng đăng nhập để xem hóa đơn."}
+                                 </p>
+                              </div>
+                           ) : (
+                              <div className="space-y-4">
+                                 {groupBillsByDate(bills).map((group) => (
+                                    <div key={group.date} className="border-2 border-[#2fd680] rounded-2xl p-6 bg-gradient-to-br from-teal-50 via-green-50 to-emerald-50 shadow-md hover:shadow-xl transition-shadow space-y-4">
+                                       {/* Group Header */}
+                                       <div className="pb-4 border-b-2 border-[#2fd680]">
+                                          <h3 className="font-bold text-xl text-[#2fd680]">
+                                             Hóa đơn ngày {new Date(group.date).toLocaleDateString("vi-VN")}
+                                          </h3>
+                                          <p className="text-sm text-[#2fd680] mt-1">
+                                             {group.totalRooms} phòng
+                                          </p>
+                                       </div>
+
+                                       {/* Bills in group */}
+                                       {group.bills.map((bill) => (
+                                          <div
+                                             key={bill._id || bill.billNumber}
+                                             className="border rounded-lg p-4 bg-white hover:shadow-md transition-shadow relative"
+                                          >
+                                             {/* Delete Button */}
+                                             <button
+                                                onClick={() => {
+                                                   if (!window.confirm(`Bạn có chắc muốn xóa hóa đơn ${bill.billNumber}?\n\nPhòng: ${bill.roomInfo?.roomName || (bill as any).bookingDetails?.roomName}\nSố tiền: ${formatCurrency(bill.finalAmount)}`)) return;
+                                                   console.log('🗑️ Deleting bill:', bill.billNumber);
+                                                   const idKey = bill._id || bill.billNumber;
+
+                                                   // Build new list from current state and update
+                                                   try {
+                                                      const newList = bills.filter((b) => (b._id || b.billNumber) !== idKey);
+                                                      setBills(newList);
+                                                      try {
+                                                         localStorage.setItem('bills_cache', JSON.stringify(newList));
+                                                      } catch (err) {
+                                                         // ignore
+                                                      }
+
+                                                      // Persist deleted id so it won't reappear on next fetch
+                                                      try {
+                                                         const raw = localStorage.getItem('deleted_bills');
+                                                         const arr: string[] = raw ? JSON.parse(raw) : [];
+                                                         if (!arr.includes(idKey)) {
+                                                            const next = [...arr, idKey];
+                                                            localStorage.setItem('deleted_bills', JSON.stringify(next));
+                                                         }
+                                                      } catch (err) {
+                                                         // ignore
+                                                      }
+
+                                                      // If all bills deleted, clear extras and reset selectedGroup
+                                                      if (newList.length === 0) {
+                                                         console.log('🗑️ All bills deleted, clearing extras');
+                                                         setExtras([]);
+                                                         setSelectedGroup(null);
+                                                      }
+                                                   } catch (err) {
+                                                      console.warn('⚠️ Error deleting bill:', err);
+                                                   }
+                                                }}
+                                                className="absolute top-2 right-2 p-2 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors z-10"
+                                                title="Xóa hóa đơn"
+                                             >
+                                                <Trash2 className="w-5 h-5" />
+                                             </button>
+
+                                             {/* Header */}
+                                             <div className="flex justify-between items-start mb-3 pr-10">
+                                                <div>
+                                                   <h3 className="font-bold text-lg">{bill.billNumber}</h3>
+                                                   <p className="text-sm text-gray-600">
+                                                      Phát hành: {formatDate(bill.issuedDate)}
+                                                   </p>
+                                                </div>
+                                                <div className="flex gap-2 flex-wrap justify-end">
+                                                   <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(bill.status)}`}>
+                                                      {getStatusText(bill.status)}
+                                                   </span>
+                                                   <span className={`px-2 py-1 rounded-full text-xs font-medium ${getPaymentStatusColor(bill.paymentStatus)}`}>
+                                                      {getPaymentStatusText(bill.paymentStatus)}
+                                                   </span>
+                                                </div>
+                                             </div>
+
+                                             {/* Info Grid */}
+                                             <div className="space-y-2 mb-3 text-sm">
+                                                <div className="flex items-start gap-2">
+                                                   <span className="text-gray-600 min-w-[100px]">Khách hàng:</span>
+                                                   <span className="font-medium">{bill.customerInfo.fullName}</span>
+                                                </div>
+                                                <div className="flex items-start gap-2">
+                                                   <span className="text-gray-600 min-w-[100px]">SĐT:</span>
+                                                   <span className="font-medium">{bill.customerInfo.phone}</span>
+                                                </div>
+                                                <div className="flex items-start gap-2">
+                                                   <span className="text-gray-600 min-w-[100px]">Phòng:</span>
+                                                   <span className="font-medium">{bill.roomInfo?.roomName || (bill as any).bookingDetails?.roomName}</span>
+                                                </div>
+                                             </div>
+
+                                             {/* Dates and Pricing */}
+                                             <div className="border-t pt-3 space-y-2 text-sm">
+                                                <div className="flex justify-between">
+                                                   <span className="text-gray-600">Ngày:</span>
+                                                   <span className="font-medium">
+                                                      {formatDate(bill.checkIn || (bill as any).bookingDetails?.checkIn)} - {formatDate(bill.checkOut || (bill as any).bookingDetails?.checkOut)} ({bill.nights || (bill as any).bookingDetails?.nights} đêm)
+                                                   </span>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                   <span className="text-gray-600">Số khách:</span>
+                                                   <span className="font-medium">{bill.guests || (bill as any).bookingDetails?.guests} người</span>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                   <span className="text-gray-600">Tiền phòng:</span>
+                                                   <span>{formatCurrency(bill.totalPrice || (((bill as any).bookingDetails?.nightlyPrice || bill.roomInfo?.nightlyPrice || 0) * (bill.nights || (bill as any).bookingDetails?.nights || 1)))}</span>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                   <span className="text-gray-600">Thuế VAT (8%):</span>
+                                                   <span>{formatCurrency(bill.tax)}</span>
+                                                </div>
+                                                {/* Booking details summary */}
+                                                <div className="pt-2">
+                                                   <p className="text-gray-600 text-sm font-medium mb-1">Chi tiết đặt phòng</p>
+                                                   <div className="text-sm text-gray-700">
+                                                      <div>Giá/đêm: {formatCurrency((bill as any).bookingDetails?.nightlyPrice || bill.roomInfo?.nightlyPrice || 0)}</div>
+                                                      <div>Số đêm: {(bill as any).bookingDetails?.nights || bill.nights}</div>
+                                                      {(bill as any).bookingDetails?.specialRequests && <div>Ghi chú: {(bill as any).bookingDetails.specialRequests}</div>}
+                                                   </div>
+                                                </div>
+                                                <div className="flex justify-between items-center pt-2 border-t">
+                                                   <span className="font-semibold">Tiền phòng này:</span>
+                                                   <span className="text-lg font-bold text-gray-800">
+                                                      {formatCurrency(bill.finalAmount)}
+                                                   </span>
+                                                </div>
+                                             </div>
+                                          </div>
+                                       ))}
+
+                                       {/* Quick Add Services & Food Section - MOVED HERE */}
+                                       <div className="border-t-2 border-[#2fd680] pt-4 mt-4">
+                                          <h3 className="font-bold text-xl text-[#2fd680] mb-4">Thêm dịch vụ & ẩm thực</h3>
+
+                                          {/* Services */}
+                                          <div className="mb-6">
+                                             <h4 className="font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                                                <span className="text-[#2fd680]">●</span> Dịch vụ
+                                             </h4>
+                                             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                                {[
+                                                   { title: "Giặt ủi", price: "50.000 VNĐ / kg", img: "https://cdn.pixabay.com/photo/2021/02/02/12/38/iron-5973837_1280.jpg" },
+                                                   { title: "Đưa đón sân bay", price: "1.000.000 VNĐ / lượt", img: "https://cdn.pixabay.com/photo/2018/02/14/15/50/lufthansa-regional-3153209_1280.jpg" },
+                                                   { title: "Ăn sáng Buffet", price: "Bao gồm trong giá phòng", img: "https://images.unsplash.com/photo-1722477936580-84aa10762b0b?auto=format&fit=crop&w=800&q=60" },
+                                                   { title: "Hồ bơi vô cực", price: "Miễn phí cho khách lưu trú", img: "https://images.unsplash.com/photo-1571003123894-1f0594d2b5d9?auto=format&fit=crop&w=800&q=60" },
+                                                   { title: "Nhà hàng & Quầy Bar", price: "Từ 300.000 VNĐ / món", img: "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=800&q=60" },
+                                                   { title: "Spa & Trị liệu", price: "500.000 VNĐ / liệu trình", img: "https://images.unsplash.com/photo-1540555700478-4be289fbecef?auto=format&fit=crop&w=800&q=60" },
+                                                   { title: "Phòng Gym & Fitness", price: "Miễn phí cho khách lưu trú", img: "https://images.unsplash.com/photo-1571902943202-507ec2618e8f?auto=format&fit=crop&w=800&q=60" },
+                                                   { title: "Cho thuê xe máy", price: "120.000 VNĐ / ngày", img: "https://images.unsplash.com/photo-1558981403-c5f9899a28bc?auto=format&fit=crop&w=800&q=60" },
+                                                   { title: "Tour du lịch", price: "Từ 800.000 VNĐ / người", img: "https://images.unsplash.com/photo-1476514525535-07fb3b4ae5f1?auto=format&fit=crop&w=800&q=60" },
+                                                ].map((service, idx) => (
+                                                   <div key={idx} className="flex items-center justify-between p-3 border border-gray-200 rounded-lg hover:border-[#2fd680] transition-colors">
+                                                      <div className="flex-1">
+                                                         <p className="font-medium text-gray-800">{service.title}</p>
+                                                         <p className="text-sm text-gray-600">{service.price}</p>
+                                                      </div>
+                                                      <button
+                                                         onClick={() => {
+                                                            window.dispatchEvent(new CustomEvent('selectService', {
+                                                               detail: { title: service.title, price: service.price, img: service.img }
+                                                            }));
+                                                            try {
+                                                               setRecentlyAdded(prev => ({ ...prev, [service.title]: true }));
+                                                               setTimeout(() => setRecentlyAdded(prev => { const next = { ...prev }; delete next[service.title]; return next; }), 1800);
+                                                            } catch (err) {
+                                                               // ignore
+                                                            }
+                                                         }}
+                                                         disabled={!!recentlyAdded[service.title]}
+                                                         className={`ml-3 px-4 py-2 rounded-lg transition-colors text-sm font-medium ${recentlyAdded[service.title] ? 'bg-gray-200 text-gray-700 cursor-not-allowed' : 'bg-[#2fd680] text-white hover:bg-[#25a060]'}`}
+                                                      >
+                                                         {recentlyAdded[service.title] ? 'Đã thêm' : 'Thêm'}
+                                                      </button>
+                                                   </div>
+                                                ))}
+                                             </div>
+                                          </div>
+
+                                          {/* Food */}
+                                          <div>
+                                             <h4 className="font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                                                <span className="text-[#2fd680]">●</span> Ẩm thực
+                                             </h4>
+                                             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                                {[
+                                                   { title: "Phở bò", price: "95.000 VNĐ", img: "https://images.unsplash.com/photo-1582878826629-29b7ad1cdc43?auto=format&fit=crop&w=800&q=60" },
+                                                   { title: "Gỏi cuốn", price: "75.000 VNĐ", img: "https://plus.unsplash.com/premium_photo-1663850685033-a8557389963e?auto=format&fit=crop&w=600&q=60" },
+                                                   { title: "Cơm Gà Hải Nam", price: "110.000 VNĐ", img: "https://images.unsplash.com/photo-1569058242252-623df46b5025?auto=format&fit=crop&w=600&q=60" },
+                                                   { title: "Sashimi Set", price: "250.000 VNĐ", img: "https://images.unsplash.com/photo-1553621042-f6e147245754?auto=format&fit=crop&w=800&q=60" },
+                                                   { title: "Pad Thái", price: "135.000 VNĐ", img: "https://images.unsplash.com/photo-1655091273851-7bdc2e578a88?auto=format&fit=crop&w=600&q=60" },
+                                                   { title: "Vịt Quay Bắc Kinh", price: "350.000 VNĐ", img: "https://media.istockphoto.com/id/1557558337/vi/anh/c%E1%BA%AFt-v%E1%BB%8Bt-quay-b%E1%BA%AFc-kinh.jpg?s=612x612" },
+                                                   { title: "Steak Ribeye", price: "450.000 VNĐ", img: "https://media.istockphoto.com/id/522134088/vi/anh/steack-v%E1%BB%9Bi-c%C3%A0-chua.jpg?s=612x612" },
+                                                   { title: "Mỳ Ý Carbonara", price: "180.000 VNĐ", img: "https://media.istockphoto.com/id/470065924/vi/anh/cabonara-ramen.jpg?s=612x612" },
+                                                   { title: "Pizza Parma Ham", price: "220.000 VNĐ", img: "https://media.istockphoto.com/id/1167700422/vi/anh/meat-mix-pizza.jpg?s=612x612" },
+                                                   { title: "Salad Caesar", price: "150.000 VNĐ", img: "https://media.istockphoto.com/id/1495924977/vi/anh/m%E1%BB%99t-m%C3%B3n-salad-caesar.jpg?s=612x612" },
+                                                   { title: "Cá Hồi Áp Chảo", price: "280.000 VNĐ", img: "https://media.istockphoto.com/id/2211865912/vi/anh/fried-salmon-steak.jpg?s=612x612" },
+                                                   { title: "Sườn Cừu Nướng", price: "420.000 VNĐ", img: "https://media.istockphoto.com/id/1080892544/vi/anh/than-n%C6%B0%E1%BB%9Bng-s%C6%B0%E1%BB%9Dn-c%E1%BB%ABu.jpg?s=612x612" },
+                                                   { title: "Heineken", price: "55.000 VNĐ", img: "https://media.istockphoto.com/id/458411525/vi/anh/bia-heineken.jpg?s=612x612" },
+                                                   { title: "Tiger Crystal", price: "55.000 VNĐ", img: "https://m.media-amazon.com/images/I/71UFITN4MBL._AC_SL1200_.jpg" },
+                                                   { title: "Corona Extra", price: "70.000 VNĐ", img: "https://media.istockphoto.com/id/533717776/vi/anh/chai-bia-corona-extra.jpg?s=612x612" },
+                                                   { title: "Mojito Chanh Bạc Hà", price: "120.000 VNĐ", img: "https://media.gettyimages.com/id/1253999472/photo/mojito-cocktail.jpg?s=612x612" },
+                                                   { title: "Margarita", price: "140.000 VNĐ", img: "https://media.gettyimages.com/id/1646896493/photo/margarita-classic-style.jpg?s=612x612" },
+                                                   { title: "Espresso Martini", price: "160.000 VNĐ", img: "https://media.gettyimages.com/id/1455558757/photo/espresso-martini-cocktails.jpg?s=612x612" },
+                                                ].map((food, idx) => (
+                                                   <div key={idx} className="flex items-center justify-between p-3 border border-gray-200 rounded-lg hover:border-[#2fd680] transition-colors">
+                                                      <div className="flex-1">
+                                                         <p className="font-medium text-gray-800">{food.title}</p>
+                                                         <p className="text-sm text-gray-600">{food.price}</p>
+                                                      </div>
+                                                      <button
+                                                         onClick={() => {
+                                                            window.dispatchEvent(new CustomEvent('selectFood', {
+                                                               detail: { title: food.title, price: food.price, img: food.img }
+                                                            }));
+                                                            try {
+                                                               setRecentlyAdded(prev => ({ ...prev, [food.title]: true }));
+                                                               setTimeout(() => setRecentlyAdded(prev => { const next = { ...prev }; delete next[food.title]; return next; }), 1800);
+                                                            } catch (err) {
+                                                               // ignore
+                                                            }
+                                                         }}
+                                                         disabled={!!recentlyAdded[food.title]}
+                                                         className={`ml-3 px-4 py-2 rounded-lg transition-colors text-sm font-medium ${recentlyAdded[food.title] ? 'bg-gray-200 text-gray-700 cursor-not-allowed' : 'bg-[#2fd680] text-white hover:bg-[#25a060]'}`}
+                                                      >
+                                                         {recentlyAdded[food.title] ? 'Đã thêm' : 'Thêm'}
+                                                      </button>
+                                                   </div>
+                                                ))}
+                                             </div>
+                                          </div>
+                                       </div>
+
+                                       {/* Extras Section - Services & Food */}
+                                       {extras.length > 0 && (
+                                          <>
+                                             <div className="border-t-2 border-[#2fd680] pt-4 mt-4">
+                                                <h4 className="font-bold text-lg text-[#2fd680] mb-4">Dịch vụ & ẩm thực đã chọn</h4>
+                                             </div>
+
+                                             {/* Services Section */}
+                                             {extras.filter(item => item.type === 'service').length > 0 && (
+                                                <div className="mb-6">
+                                                   <h5 className="font-semibold text-gray-700 mb-3">Dịch vụ</h5>
+                                                   <div className="space-y-3">
+                                                      {extras.filter(item => item.type === 'service').map((item) => (
+                                                         <div
+                                                            key={item.id}
+                                                            className="border rounded-lg p-4 bg-white hover:shadow-md transition-shadow relative"
+                                                         >
+                                                            {/* Delete Button */}
+                                                            <button
+                                                               onClick={() => {
+                                                                  if (window.confirm(`Bạn có chắc muốn xóa "${item.title}"?`)) {
+                                                                     setExtras(prev => prev.filter(e => e.id !== item.id));
+                                                                  }
+                                                               }}
+                                                               className="absolute top-2 right-2 p-2 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors z-10"
+                                                               title="Xóa"
+                                                            >
+                                                               <Trash2 className="w-5 h-5" />
+                                                            </button>
+
+                                                            {/* Header */}
+                                                            <div className="flex justify-between items-start mb-3 pr-10">
+                                                               <div>
+                                                                  <h3 className="font-bold text-lg">{item.title}</h3>
+                                                               </div>
+                                                            </div>
+
+                                                            {/* Info */}
+                                                            <div className="border-t pt-3 space-y-2 text-sm">
+                                                               <div className="flex justify-between">
+                                                                  <span className="text-gray-600">Đơn giá:</span>
+                                                                  <span className="font-medium">{formatCurrency(item.price)}</span>
+                                                               </div>
+                                                               <div className="flex justify-between items-center">
+                                                                  <span className="text-gray-600">Số lượng:</span>
+                                                                  <div className="flex items-center gap-3">
+                                                                     <button
+                                                                        onClick={() => {
+                                                                           if (item.quantity > 1) {
+                                                                              setExtras(prev => prev.map(e =>
+                                                                                 e.id === item.id ? { ...e, quantity: e.quantity - 1 } : e
+                                                                              ));
+                                                                           }
+                                                                        }}
+                                                                        className="w-7 h-7 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-sm"
+                                                                     >
+                                                                        −
+                                                                     </button>
+                                                                     <span className="font-bold">{item.quantity}</span>
+                                                                     <button
+                                                                        onClick={() => {
+                                                                           setExtras(prev => prev.map(e =>
+                                                                              e.id === item.id ? { ...e, quantity: e.quantity + 1 } : e
+                                                                           ));
+                                                                        }}
+                                                                        className="w-7 h-7 rounded bg-[#2fd680] hover:bg-[#25a060] text-white flex items-center justify-center font-bold text-sm"
+                                                                     >
+                                                                        +
+                                                                     </button>
+                                                                  </div>
+                                                               </div>
+                                                               <div className="flex justify-between items-center pt-2 border-t">
+                                                                  <span className="font-semibold">Thành tiền:</span>
+                                                                  <span className="text-lg font-bold text-gray-800">
+                                                                     {formatCurrency(item.price * item.quantity)}
+                                                                  </span>
+                                                               </div>
+                                                            </div>
+                                                         </div>
+                                                      ))}
+                                                   </div>
+                                                </div>
+                                             )}
+
+                                             {/* Food Section */}
+                                             {extras.filter(item => item.type === 'food').length > 0 && (
+                                                <div>
+                                                   <h5 className="font-semibold text-gray-700 mb-3">Ẩm thực</h5>
+                                                   <div className="space-y-3">
+                                                      {extras.filter(item => item.type === 'food').map((item) => (
+                                                         <div
+                                                            key={item.id}
+                                                            className="border rounded-lg p-4 bg-white hover:shadow-md transition-shadow relative"
+                                                         >
+                                                            {/* Delete Button */}
+                                                            <button
+                                                               onClick={() => {
+                                                                  if (window.confirm(`Bạn có chắc muốn xóa "${item.title}"?`)) {
+                                                                     setExtras(prev => prev.filter(e => e.id !== item.id));
+                                                                  }
+                                                               }}
+                                                               className="absolute top-2 right-2 p-2 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors z-10"
+                                                               title="Xóa"
+                                                            >
+                                                               <Trash2 className="w-5 h-5" />
+                                                            </button>
+
+                                                            {/* Header */}
+                                                            <div className="flex justify-between items-start mb-3 pr-10">
+                                                               <div>
+                                                                  <h3 className="font-bold text-lg">{item.title}</h3>
+                                                               </div>
+                                                            </div>
+
+                                                            {/* Info */}
+                                                            <div className="border-t pt-3 space-y-2 text-sm">
+                                                               <div className="flex justify-between">
+                                                                  <span className="text-gray-600">Đơn giá:</span>
+                                                                  <span className="font-medium">{formatCurrency(item.price)}</span>
+                                                               </div>
+                                                               <div className="flex justify-between items-center">
+                                                                  <span className="text-gray-600">Số lượng:</span>
+                                                                  <div className="flex items-center gap-3">
+                                                                     <button
+                                                                        onClick={() => {
+                                                                           if (item.quantity > 1) {
+                                                                              setExtras(prev => prev.map(e =>
+                                                                                 e.id === item.id ? { ...e, quantity: e.quantity - 1 } : e
+                                                                              ));
+                                                                           }
+                                                                        }}
+                                                                        className="w-7 h-7 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-sm"
+                                                                     >
+                                                                        −
+                                                                     </button>
+                                                                     <span className="font-bold">{item.quantity}</span>
+                                                                     <button
+                                                                        onClick={() => {
+                                                                           setExtras(prev => prev.map(e =>
+                                                                              e.id === item.id ? { ...e, quantity: e.quantity + 1 } : e
+                                                                           ));
+                                                                        }}
+                                                                        className="w-7 h-7 rounded bg-[#2fd680] hover:bg-[#25a060] text-white flex items-center justify-center font-bold text-sm"
+                                                                     >
+                                                                        +
+                                                                     </button>
+                                                                  </div>
+                                                               </div>
+                                                               <div className="flex justify-between items-center pt-2 border-t">
+                                                                  <span className="font-semibold">Thành tiền:</span>
+                                                                  <span className="text-lg font-bold text-gray-800">
+                                                                     {formatCurrency(item.price * item.quantity)}
+                                                                  </span>
+                                                               </div>
+                                                            </div>
+                                                         </div>
+                                                      ))}
+                                                   </div>
+                                                </div>
+                                             )}
+                                          </>
+                                       )}
+
+                                       {/* Total Payment and Pay Now Button */}
+                                       <div className="mt-4 pt-5 border-t-2 border-[#2fd680] bg-white rounded-xl p-5 shadow-inner">
+                                          {(() => {
+                                             const extrasTotal = extras.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+                                             const grandTotal = group.totalAmount + extrasTotal;
+                                             const serviceCount = extras.filter(item => item.type === 'service').length;
+                                             const foodCount = extras.filter(item => item.type === 'food').length;
+                                             return (
+                                                <>
+                                                   {extrasTotal > 0 && (
+                                                      <div className="mb-3 pb-3 border-b space-y-2">
+                                                         <div className="flex justify-between text-gray-700">
+                                                            <span>Tiền phòng ({group.totalRooms} phòng):</span>
+                                                            <span className="font-semibold">{formatCurrency(group.totalAmount)}</span>
+                                                         </div>
+                                                         {serviceCount > 0 && (
+                                                            <div className="flex justify-between text-gray-700">
+                                                               <span>Dịch vụ ({serviceCount} dịch vụ):</span>
+                                                               <span className="font-semibold">{formatCurrency(extras.filter(item => item.type === 'service').reduce((sum, item) => sum + (item.price * item.quantity), 0))}</span>
+                                                            </div>
+                                                         )}
+                                                         {foodCount > 0 && (
+                                                            <div className="flex justify-between text-gray-700">
+                                                               <span>Ẩm thực ({foodCount} món):</span>
+                                                               <span className="font-semibold">{formatCurrency(extras.filter(item => item.type === 'food').reduce((sum, item) => sum + (item.price * item.quantity), 0))}</span>
+                                                            </div>
+                                                         )}
+                                                      </div>
+                                                   )}
+                                                   <div className="flex justify-between items-center mb-4">
+                                                      <span className="text-xl font-bold text-gray-800">Tổng thanh toán:</span>
+                                                      <span className="text-4xl font-bold text-[#2fd680]">
+                                                         {formatCurrency(grandTotal)}
+                                                      </span>
+                                                   </div>
+                                                   <button
+                                                      onClick={() => {
+                                                         setSelectedGroup(group);
+                                                         setActiveTab('payment');
+                                                      }}
+                                                      className="w-full bg-[#2fd680] text-white py-4 px-6 rounded-xl font-bold text-lg hover:bg-[#25a060] transition-all duration-300 shadow-lg hover:shadow-2xl transform hover:scale-[1.02] active:scale-[0.98]"
+                                                   >
+                                                      Thanh toán ngay
+                                                   </button>
+                                                </>
+                                             );
+                                          })()}
+                                       </div>
+                                    </div>
+                                 ))}
+                              </div>
+                           )}
+                        </>
+                     )}
+
+                     {/* Payment Tab Content */}
+                     {activeTab === 'payment' && (selectedGroup || extras.length > 0) && (
+                        <div className="space-y-4">
+                           {/* Payment Header */}
+                           <div className="text-center mb-6">
+                              <h3 className="text-2xl font-bold text-gray-800 mb-2">Thanh toán</h3>
+                              <p className="text-gray-600">Quét mã QR hoặc chuyển khoản để hoàn tất</p>
+                           </div>
+
+                           {paymentMessage && (
+                              <div className={`mb-4 p-4 rounded-lg border-2 text-center font-medium ${paymentSuccess
+                                 ? 'bg-green-50 border-green-300 text-green-700'
+                                 : paymentMessage.includes('❌')
+                                    ? 'bg-red-50 border-red-300 text-red-700'
+                                    : 'bg-yellow-50 border-yellow-300 text-yellow-700'
+                                 }`}>
+                                 {paymentMessage}
+                              </div>
+                           )}
+
+                           {/* Payment Summary */}
+                           {(() => {
+                              // const roomTotal = selectedGroup ? selectedGroup.totalAmount : 0;
+                              // const extrasTotal = extras.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+                              // const grandTotal = roomTotal + extrasTotal;
+                              // The actual transfer amount is determined by the backend and reflected in qrData.amount
+                              // (includes bill finalAmount + any extras charged to bill)
+
+                              return (
+                                 <>
+                                    {/* Breakdown removed: showing QR, extras and policies only */}
+
+                                    {/* QR Code Section */}
+                                    <div className="bg-gradient-to-br from-teal-50 via-green-50 to-emerald-50 rounded-2xl p-4 text-center border-2 border-[#2fd680]">
+                                       <h4 className="font-bold text-lg mb-3 text-[#2fd680]">
+                                          Quét mã QR để thanh toán
+                                       </h4>
+
+                                       {/* Countdown Timer */}
+                                       <div className={`mb-4 inline-block px-4 py-2 rounded-lg font-bold text-lg ${countdownSeconds <= 60
+                                             ? 'bg-red-100 text-red-700'
+                                             : 'bg-yellow-100 text-yellow-700'
+                                          }`}>
+                                          ⏳ {Math.floor(countdownSeconds / 60)}:{String(countdownSeconds % 60).padStart(2, '0')}
+                                       </div>
+
+                                       {/* QR Code Display */}
+                                       <div className="bg-white p-4 rounded-2xl inline-block shadow-2xl border-2 border-[#2fd680] mb-4">
+                                          {qrData ? (
+                                             <img
+                                                src={qrData}
+                                                alt="VietQR Code"
+                                                className="w-56 h-56 object-contain rounded-xl"
+                                             />
+                                          ) : (
+                                             <div className="w-56 h-56 flex items-center justify-center bg-gray-100">
+                                                <span className="text-gray-500">Đang tải QR...</span>
+                                             </div>
+                                          )}
+                                       </div>
+
+                                       <p className="text-base text-gray-700 mt-3 font-medium">
+                                          Sử dụng ứng dụng ngân hàng để quét mã QR
+                                       </p>
+
+                                       {/* Bank Account Info */}
+                                       <div className="mt-3 bg-white rounded-xl p-3 shadow-md border border-[#2fd680]">
+                                          <div className="space-y-2 text-sm text-gray-700">
+                                             <p className="flex items-center justify-between">
+                                                <span>Chủ tài khoản:</span>
+                                                <strong className="text-[#2fd680]">HOTEL BOOKING</strong>
+                                             </p>
+                                             <p className="flex items-center justify-between border-t pt-2 bg-yellow-50 px-2 py-1 rounded">
+                                                <span>Ghi chú:</span>
+                                                <strong className="text-[#2fd680] font-mono">HD{selectedGroup?.bills?.[0]?.billNumber || bills[0]?.billNumber}</strong>
+                                             </p>
+                                          </div>
+                                       </div>
+                                    </div>
+
+                                    {/* Policies Section */}
+                                    <div className="grid md:grid-cols-2 gap-3">
+                                       {/* Privacy Policy */}
+                                       <div className="border-2 border-[#2fd680] rounded-xl p-4 hover:shadow-lg transition-all bg-gradient-to-br from-white to-teal-50">
+                                          <h4 className="font-bold text-gray-800 mb-3 text-lg">
+                                             Chính sách bảo mật
+                                          </h4>
+                                          <div className="text-sm text-gray-600 space-y-2">
+                                             <p>✓ Thông tin thanh toán được mã hóa SSL 256-bit</p>
+                                             <p>✓ Không lưu trữ thông tin thẻ thanh toán</p>
+                                             <p>✓ Tuân thủ chuẩn bảo mật PCI DSS</p>
+                                             <p>✓ Thông tin cá nhân được bảo vệ nghiêm ngặt</p>
+                                          </div>
+                                       </div>
+
+                                       {/* Refund Policy */}
+                                       <div className="border-2 border-[#2fd680] rounded-xl p-4 hover:shadow-lg transition-all bg-gradient-to-br from-white to-teal-50">
+                                          <h4 className="font-bold text-gray-800 mb-3 text-lg">
+                                             Chính sách hoàn trả
+                                          </h4>
+                                          <div className="text-sm text-gray-600 space-y-2">
+                                             <p>• <strong>Hủy trước 7 ngày:</strong> Hoàn 100%</p>
+                                             <p>• <strong>Hủy trước 3-6 ngày:</strong> Hoàn 50%</p>
+                                             <p>• <strong>Hủy trước 1-2 ngày:</strong> Hoàn 25%</p>
+                                             <p>• <strong>Hủy trong ngày:</strong> Không hoàn tiền</p>
+                                             <p className="text-[#2fd680] font-medium mt-2">Xử lý: 5-7 ngày làm việc</p>
+                                          </div>
+                                       </div>
+
+                                       {/* Exchange Policy */}
+                                       <div className="border-2 border-[#2fd680] rounded-xl p-4 hover:shadow-lg transition-all bg-gradient-to-br from-white to-emerald-50">
+                                          <h4 className="font-bold text-gray-800 mb-3 text-lg">
+                                             Chính sách đổi trả
+                                          </h4>
+                                          <div className="text-sm text-gray-600 space-y-2">
+                                             <p>✓ Đổi phòng miễn phí (thông báo trước 24h)</p>
+                                             <p>✓ Nâng hạng phòng với phí chênh lệch</p>
+                                             <p>✓ Đổi ngày đặt tùy phòng trống</p>
+                                             <p>✓ Liên hệ hotline hỗ trợ nhanh</p>
+                                          </div>
+                                       </div>
+
+                                       {/* Support */}
+                                       <div className="border-2 border-[#2fd680] rounded-xl p-4 hover:shadow-lg transition-all bg-gradient-to-br from-white to-emerald-50">
+                                          <h4 className="font-bold text-gray-800 mb-3 text-lg">
+                                             Hỗ trợ thanh toán
+                                          </h4>
+                                          <div className="text-sm text-gray-600 space-y-2">
+                                             <p>Hotline: <strong>1900-xxxx</strong> (24/7)</p>
+                                             <p>Email: <strong>support@hotelhub.vn</strong></p>
+                                             <p>Zalo/Viber: <strong>0901-234-567</strong></p>
+                                          </div>
+                                       </div>
+                                    </div>
+
+                                    {/* Confirmation Button */}
+                                    <div className="space-y-3">
+                                       <button
+                                          onClick={() => setActiveTab('bills')}
+                                          className="flex items-center gap-2 text-[#2fd680] hover:text-[#25a060] font-medium transition-colors py-2"
+                                       >
+                                          <ArrowLeft className="w-5 h-5" />
+                                          Quay lại hóa đơn
+                                       </button>
+                                    </div>
+
+                                    <div className="bg-white pt-4 border-t space-y-3">
+                                       <button
+                                          onClick={async () => {
+                                             try {
+                                                console.log('✅ User clicked Đã thanh toán');
+                                                const token = localStorage.getItem('auth_token') || localStorage.getItem('token');
+                                                if (!token) {
+                                                   setPaymentMessage('❌ Bạn cần đăng nhập để xác nhận');
+                                                   return;
+                                                }
+
+                                                const getIds = () => {
+                                                   if (selectedGroup && Array.isArray(selectedGroup.bills) && selectedGroup.bills.length > 0) {
+                                                      return selectedGroup.bills.map((b: any) => b._id || b.billNumber).filter(Boolean) as string[];
+                                                   }
+                                                   return bills.map((b: any) => b._id || b.billNumber).filter(Boolean) as string[];
+                                                };
+
+                                                const ids = getIds();
+                                                if (ids.length === 0) {
+                                                   setPaymentMessage('❌ Không tìm thấy hóa đơn');
+                                                   return;
+                                                }
+
+                                                setPaymentMessage('⏳ Đang gửi yêu cầu xác nhận...');
+                                                let confirmedCount = 0;
+                                                for (const id of ids) {
+                                                   try {
+                                                      const resp = await fetch(`${API_BASE_URL.replace(/\/+$/, '')}/bills/${id}/confirm-by-user`, {
+                                                         method: 'POST',
+                                                         headers: {
+                                                            Authorization: `Bearer ${token}`,
+                                                            'Content-Type': 'application/json'
+                                                         },
+                                                         body: JSON.stringify({ note: 'User confirmed' })
+                                                      });
+                                                      if (resp.ok) {
+                                                         confirmedCount++;
+                                                         const json = await resp.json();
+                                                         const bill = json?.data || json;
+                                                         try {
+                                                            const roomId = bill?.roomInfo?.roomId || bill?.booking?.room;
+                                                            if (roomId) window.dispatchEvent(new CustomEvent('roomUpdated', { detail: { roomId } }));
+                                                         } catch (e) { }
+                                                      }
+                                                   } catch (err) {
+                                                      console.warn('Confirm error:', err);
+                                                   }
+                                                }
+
+                                                if (confirmedCount > 0) {
+                                                   setPaymentMessage('⏳ Đã gửi xác nhận. Đang chờ ngân hàng...');
+                                                   setPaymentPollingActive(true);
+                                                   setTimeout(() => fetchBills(), 500);
+                                                } else {
+                                                   setPaymentMessage('❌ Không thể gửi xác nhận');
+                                                }
+                                             } catch (err) {
+                                                console.error(err);
+                                                setPaymentMessage('❌ Lỗi khi xác nhận');
+                                             }
+                                          }}
+                                          disabled={paymentPollingActive}
+                                          className="w-full bg-[#2fd680] text-white py-3 px-6 rounded-xl font-bold text-base hover:bg-[#25a060] disabled:bg-gray-400 transition-all duration-300 shadow-lg hover:shadow-2xl"
+                                       >
+                                          {paymentPollingActive ? '⏳ Đang xác nhận...' : 'Đã thanh toán'}
+                                       </button>
+                                       <button
+                                          onClick={() => {
+                                             setActiveTab('bills');
+                                             setPaymentPollingActive(false);
+                                             setPaymentMessage(null);
+                                          }}
+                                          className="w-full text-gray-600 py-2 px-4 rounded-lg hover:bg-gray-100 transition-colors"
+                                       >
+                                          Quay lại
+                                       </button>
+                                    </div>
+                                 </>
+                              );
+                           })()}
+                        </div>
+                     )}
+                  </div>
+               </div>
+            </div>
+         )}
+
+      </>
+   );
+};
+
+export default FloatingBills;
