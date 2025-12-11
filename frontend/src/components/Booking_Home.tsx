@@ -20,6 +20,7 @@ export default function Booking_Home() {
    const [email, setEmail] = useState("");
    const [phone, setPhone] = useState("");
    const [roomType, setRoomType] = useState<keyof typeof ROOM_TYPES>("Phòng trung cấp");
+   const [roomName, setRoomName] = useState<string>(""); // Actual room name selected (e.g., "EXECUTIVE PLUS")
    const [roomPrice, setRoomPrice] = useState<string>("");
    const [roomId, setRoomId] = useState<string>("");
    const [checkIn, setCheckIn] = useState("");
@@ -83,6 +84,7 @@ export default function Booking_Home() {
 
          // Prefill booking info from intent
          if (intent.roomName) {
+            setRoomName(intent.roomName);
             // Check if roomName matches a key in ROOM_TYPES
             if (intent.roomName in ROOM_TYPES) {
                setRoomType(intent.roomName as keyof typeof ROOM_TYPES);
@@ -136,6 +138,7 @@ export default function Booking_Home() {
                   if (intent.roomName && intent.roomName in ROOM_TYPES) {
                      setRoomType(String(intent.roomName) as keyof typeof ROOM_TYPES);
                   }
+                  if (intent.roomName) setRoomName(String(intent.roomName));
                   if (intent.price) setRoomPrice(String(intent.price));
                   if (intent.guests) {
                      // Parse guests if it's a string
@@ -163,6 +166,7 @@ export default function Booking_Home() {
       setEmail("");
       setPhone("");
       setRoomType("Phòng trung cấp");
+      setRoomName("");
       setRoomPrice("");
       setRoomId("");
       setCheckIn("");
@@ -232,7 +236,7 @@ export default function Booking_Home() {
          try {
             const pending = {
                roomId,
-               roomName: roomType,
+               roomName: roomName || roomType,
                guests,
                checkIn,
                checkOut,
@@ -291,6 +295,7 @@ export default function Booking_Home() {
          console.log("📤 Token (first 30 chars):", token.substring(0, 30) + "...");
          console.log("📤 Body:", {
             roomType,
+            roomName,
             roomPrice: pricePerNight,
             fullName,
             email,
@@ -310,6 +315,7 @@ export default function Booking_Home() {
             body: JSON.stringify({
                roomId: roomId || undefined,
                roomType,
+               roomName: roomName || roomType,
                roomPrice: pricePerNight.toString(),
                fullName,
                email,
@@ -363,7 +369,7 @@ export default function Booking_Home() {
                      const tax = total * 0.08;
                      const finalAmount = total + tax;
 
-                     const roomName = booking.room?.name || booking.roomName || roomType;
+                     const resolvedRoomName = booking.room?.name || booking.roomName || roomName || roomType;
 
                      billObj = {
                         _id: booking._id ? `temp-${booking._id}` : `temp-${Date.now()}`,
@@ -374,12 +380,12 @@ export default function Booking_Home() {
                            phone: booking.phone || phone,
                         },
                         roomInfo: {
-                           roomName,
+                           roomName: resolvedRoomName,
                            roomType: booking.roomType || roomType,
                            nightlyPrice,
                         },
                         bookingDetails: {
-                           roomName,
+                           roomName: resolvedRoomName,
                            roomType: booking.roomType || roomType,
                            nightlyPrice,
                            nights,

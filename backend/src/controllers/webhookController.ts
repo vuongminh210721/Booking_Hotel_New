@@ -124,9 +124,9 @@ export const handlePaymentWebhook = async (
 };
 
 /**
- * Generate QR code for payment
- * Returns VietQR image URL from img.vietqr.io service
- * Redirects to the actual QR image
+ * Generate QR code (actual image) for payment
+ * Uses VietQR if configured, otherwise fetches from online QR service
+ * Returns image/png directly
  */
 export const generateQRCode = async (
   req: Request,
@@ -143,14 +143,70 @@ export const generateQRCode = async (
       throw new AppError("Bill not found", 404);
     }
 
-    const accountNo = config.vietQrAccount || "0396256658";
-    const bankCode = "momo"; // MoMo bank code for VietQR image service
-    const qrImageUrl = `https://img.vietqr.io/image/${bankCode}-${accountNo}-compact.png`;
+    const amount = Math.round(bill.finalAmount || 0);
+    const accountNo = config.vietQrAccount;
+    const accountName = config.vietQrName;
+    const memo = `HD${bill.billNumber}`;
+    const bankCode = "MB"; // MoMo hoặc MB
 
-    console.log("📱 VietQR image URL for", billId, ":", qrImageUrl);
+    let qrImageBuffer = null;
 
-    // Redirect to VietQR image service
-    return res.redirect(qrImageUrl);
+    // Try using VietQR library if configured
+    if (vietqr) {
+      try {
+        const qrResponse = await vietqr.genQRCode({
+          bank: bankCode,
+          accountName: accountName,
+          accountNumber: accountNo,
+          amount: amount,
+          memo: memo,
+          template: "compact",
+        });
+
+        if (qrResponse?.data?.qrDataURL) {
+          const qrData = qrResponse.data.qrDataURL;
+          if (qrData.startsWith("data:")) {
+            // Extract base64 part
+            const base64String = qrData.split(",")[1];
+            qrImageBuffer = Buffer.from(base64String, "base64");
+          }
+          console.log("✅ VietQR generated for", billId);
+        }
+      } catch (err) {
+        console.warn("⚠️ VietQR generation failed:", err);
+      }
+    }
+
+    // Fallback: fetch from online QR service
+    if (!qrImageBuffer) {
+      try {
+        const qrserverUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(
+          `00020126360014com.vietqr011800020970407${accountNo.padEnd(
+            13,
+            " "
+          )}0712${amount}${memo}`
+        )}`;
+
+        const response = await fetch(qrserverUrl);
+        if (response.ok) {
+          const arrayBuffer = await response.arrayBuffer();
+          qrImageBuffer = Buffer.from(arrayBuffer);
+          console.log("📱 Using fallback QR service for", billId);
+        }
+      } catch (err) {
+        console.warn("⚠️ Fallback QR service failed:", err);
+      }
+    }
+
+    if (!qrImageBuffer) {
+      throw new AppError("Failed to generate QR code", 500);
+    }
+
+    // Return image as PNG
+    res.setHeader("Content-Type", "image/png");
+    res.setHeader("Content-Length", qrImageBuffer.length);
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    res.send(qrImageBuffer);
   } catch (error) {
     next(error);
   }
@@ -158,7 +214,7 @@ export const generateQRCode = async (
 
 /**
  * Simple QR code generation endpoint (POST)
- * Returns VietQR image URL from img.vietqr.io service
+ * Accepts amount and memo, returns QR image file
  * Used by frontend components for quick QR generation without bill context
  */
 export const createQRCode = async (
@@ -173,14 +229,70 @@ export const createQRCode = async (
       throw new AppError("Invalid amount", 400);
     }
 
-    const accountNo = config.vietQrAccount || "0396256658";
-    const bankCode = "momo"; // MoMo bank code for VietQR image service
-    const qrImageUrl = `https://img.vietqr.io/image/${bankCode}-${accountNo}-compact.png`;
+    const accountNo = config.vietQrAccount;
+    const accountName = config.vietQrName;
+    const bankCode = "MB";
+    const description = memo || "Payment";
 
-    console.log("📱 VietQR image URL for memo:", memo, ":", qrImageUrl);
+    let qrImageBuffer = null;
 
-    // Redirect to VietQR image service
-    return res.redirect(qrImageUrl);
+    // Try using VietQR library if configured
+    if (vietqr) {
+      try {
+        const qrResponse = await vietqr.genQRCode({
+          bank: bankCode,
+          accountName: accountName,
+          accountNumber: accountNo,
+          amount: Math.round(amount),
+          memo: description,
+          template: "compact",
+        });
+
+        if (qrResponse?.data?.qrDataURL) {
+          // Convert base64 to buffer if it's a data URL
+          const qrData = qrResponse.data.qrDataURL;
+          if (qrData.startsWith("data:")) {
+            // Extract base64 part
+            const base64String = qrData.split(",")[1];
+            qrImageBuffer = Buffer.from(base64String, "base64");
+          }
+          console.log("✅ VietQR generated for memo:", memo);
+        }
+      } catch (err) {
+        console.warn("⚠️ VietQR generation failed:", err);
+      }
+    }
+
+    // Fallback: fetch from online QR service
+    if (!qrImageBuffer) {
+      try {
+        const qrserverUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(
+          `00020126360014com.vietqr011800020${bankCode}${accountNo.padEnd(
+            13,
+            " "
+          )}0712${Math.round(amount)}${description}`
+        )}`;
+
+        const response = await fetch(qrserverUrl);
+        if (response.ok) {
+          const arrayBuffer = await response.arrayBuffer();
+          qrImageBuffer = Buffer.from(arrayBuffer);
+          console.log("📱 Using fallback QR service for:", memo);
+        }
+      } catch (err) {
+        console.warn("⚠️ Fallback QR service failed:", err);
+      }
+    }
+
+    if (!qrImageBuffer) {
+      throw new AppError("Failed to generate QR code", 500);
+    }
+
+    // Return image as PNG
+    res.setHeader("Content-Type", "image/png");
+    res.setHeader("Content-Length", qrImageBuffer.length);
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    res.send(qrImageBuffer);
   } catch (error) {
     next(error);
   }

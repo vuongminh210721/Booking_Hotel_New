@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from "react";
-import { Receipt, X, ArrowLeft, Trash2 } from "lucide-react";
+import { Receipt, X, ArrowLeft, Trash2, CheckCircle, Shield, RefreshCw, DollarSign, Headphones } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
+import qrPaymentImage from "@/assets/Screenshot 2025-12-10 235114.png";
 
-// For any future static QR code fallback if needed
-// const QR_CODE_IMAGE = qrPaymentImage;
+// QR Code image from assets
+const QR_CODE_IMAGE = qrPaymentImage;
 
 interface Bill {
    _id: string;
@@ -48,6 +49,7 @@ interface ExtraItem {
    price: number;
    quantity: number;
    image?: string;
+   billId?: string; // Which bill/room this extra applies to
 }
 
 const FloatingBills = () => {
@@ -186,7 +188,7 @@ const FloatingBills = () => {
                console.log(`  Bill ${idx + 1}:`, {
                   billId: bill._id,
                   billNumber: bill.billNumber,
-                  roomName: bill.bookingDetails?.roomName || bill.roomInfo?.roomName,
+                  roomName: getRoomCategoryLabel(bill),
                   finalAmount: bill.finalAmount || bill.totalPrice,
                });
             });
@@ -530,15 +532,21 @@ const FloatingBills = () => {
       const handleServiceSelect = (e: any) => {
          console.log("🎯 Service selected:", e?.detail);
          const service = e?.detail;
+         if (!bills.length) {
+            alert("Vui lòng chọn/đặt phòng trước khi thêm dịch vụ.");
+            return;
+         }
          if (service && service.title && service.price) {
             const priceValue = parseInt(service.price.replace(/[^\d]/g, '')) || 0;
+            const targetBillId = bills[0]?._id || bills[0]?.billNumber || "";
             const newItem: ExtraItem = {
                id: `service-${Date.now()}-${Math.random()}`,
                type: 'service',
                title: service.title,
                price: priceValue,
                quantity: 1,
-               image: service.img
+               image: service.img,
+               billId: targetBillId,
             };
             setExtras(prev => {
                const existing = prev.find(item => item.title === service.title && item.type === 'service');
@@ -560,15 +568,21 @@ const FloatingBills = () => {
       const handleFoodSelect = (e: any) => {
          console.log("🍽️ Food selected:", e?.detail);
          const food = e?.detail;
+         if (!bills.length) {
+            alert("Vui lòng chọn/đặt phòng trước khi thêm ẩm thực.");
+            return;
+         }
          if (food && food.title && food.price) {
             const priceValue = parseInt(food.price.replace(/[^\d]/g, '')) || 0;
+            const targetBillId = bills[0]?._id || bills[0]?.billNumber || "";
             const newItem: ExtraItem = {
                id: `food-${Date.now()}-${Math.random()}`,
                type: 'food',
                title: food.title,
                price: priceValue,
                quantity: 1,
-               image: food.images?.[0] || food.img
+               image: food.images?.[0] || food.img,
+               billId: targetBillId,
             };
             setExtras(prev => {
                const existing = prev.find(item => item.title === food.title && item.type === 'food');
@@ -594,7 +608,7 @@ const FloatingBills = () => {
          window.removeEventListener("selectService", handleServiceSelect);
          window.removeEventListener("selectFood", handleFoodSelect);
       };
-   }, []);
+   }, [bills]);
 
    // On mount, consume any queued extras saved by other pages (e.g., Food page)
    useEffect(() => {
@@ -655,6 +669,40 @@ const FloatingBills = () => {
          style: "currency",
          currency: "VND",
       }).format(amount);
+   };
+
+   // Display name for a bill (prefer room name, fallback to bill number)
+   const getBillDisplayLabel = (bill: Bill) => {
+      return bill.roomInfo?.roomName || bill.bookingDetails?.roomName || bill.billNumber || "Phòng";
+   };
+
+   // Determine a friendly room category label for display
+   const getRoomCategoryLabel = (billLike: any) => {
+      // Prefer explicit roomType if backend provided it
+      const roomType = billLike?.roomInfo?.roomType || billLike?.bookingDetails?.roomType;
+      if (roomType) return roomType;
+
+      // Infer from nightly price if available
+      const nightly = Number(billLike?.bookingDetails?.nightlyPrice || billLike?.roomInfo?.nightlyPrice || billLike?.roomPrice || 0) || 0;
+      if (nightly === 0) {
+         // Fallback to any roomName we have, or generic label
+         // Map explicit room names to friendly category labels when needed
+         const explicitName = billLike?.roomInfo?.roomName || (billLike?.bookingDetails && billLike.bookingDetails.roomName);
+         if (explicitName) {
+            const n = (explicitName || '').toString().toLowerCase();
+            if (n.includes('basic') || n.includes('bassic') || n.includes('cơ bản') || n.includes('basic room')) return 'Phòng cơ bản';
+            if (n.includes('standard')) return 'Phòng cơ bản';
+            if (n.includes('deluxe') || n.includes('executive') || n.includes('luxury') || n.includes('premium') || n.includes('suite')) return 'Phòng cao cấp';
+            if (n.includes('studio') || n.includes('superior') || n.includes('double') || n.includes('twin')) return 'Phòng trung cấp';
+            // default if name exists but doesn't match known tokens
+            return explicitName;
+         }
+         return 'Phòng';
+      }
+
+      if (nightly <= 1000000) return 'Phòng cơ bản';
+      if (nightly <= 3000000) return 'Phòng trung cấp';
+      return 'Phòng cao cấp';
    };
 
    // Payment polling state
@@ -834,42 +882,16 @@ const FloatingBills = () => {
       };
    }, [isOpen, activeTab, paymentPollingActive]);
 
-   // Fetch QR code data when entering payment tab
+   // Load QR code image from assets when entering payment tab
    useEffect(() => {
-      const fetchQRData = async () => {
-         try {
-            const token = localStorage.getItem('auth_token') || localStorage.getItem('token');
-            if (!token) return;
-
-            const getIds = () => {
-               if (selectedGroup && Array.isArray(selectedGroup.bills) && selectedGroup.bills.length > 0) {
-                  return selectedGroup.bills.map((b: any) => b._id || b.billNumber).filter(Boolean) as string[];
-               }
-               return bills.map((b: any) => b._id || b.billNumber).filter(Boolean) as string[];
-            };
-
-            const ids = getIds();
-            if (ids.length === 0) return;
-
-            // Use first bill ID for QR
-            const billId = ids[0];
-            const base = API_BASE_URL.replace(/\/+$/, '');
-            // Construct direct URL to VietQR image (endpoint redirects to it)
-            const qrUrl = `${base}/webhooks/qr/${billId}`;
-            setQrData(qrUrl);
-         } catch (err) {
-            console.warn('Failed to fetch QR data:', err);
-         }
-      };
-
       if (isOpen && activeTab === 'payment') {
          setCountdownSeconds(300); // Reset countdown
-         fetchQRData();
+         setQrData(QR_CODE_IMAGE); // Use static image from assets
          setPaymentPollingActive(true);
       } else {
          setPaymentPollingActive(false);
       }
-   }, [isOpen, activeTab, selectedGroup, bills, API_BASE_URL]);
+   }, [isOpen, activeTab]);
 
    // Group bills by date (same day bookings grouped together)
    const groupBillsByDate = (billsList: Bill[]) => {
@@ -994,10 +1016,10 @@ const FloatingBills = () => {
                                        {/* Group Header */}
                                        <div className="pb-4 border-b-2 border-[#2fd680]">
                                           <h3 className="font-bold text-xl text-[#2fd680]">
-                                             Hóa đơn ngày {new Date(group.date).toLocaleDateString("vi-VN")}
+                                             Hóa đơn của bạn
                                           </h3>
                                           <p className="text-sm text-[#2fd680] mt-1">
-                                             {group.totalRooms} phòng
+                                             (Đã chọn {group.totalRooms} phòng)
                                           </p>
                                        </div>
 
@@ -1005,12 +1027,12 @@ const FloatingBills = () => {
                                        {group.bills.map((bill) => (
                                           <div
                                              key={bill._id || bill.billNumber}
-                                             className="border rounded-lg p-4 bg-white hover:shadow-md transition-shadow relative"
+                                             className="bg-gradient-to-br from-white via-teal-50 to-green-50 rounded-xl border-2 border-[#2fd680] p-5 hover:shadow-lg transition-shadow relative"
                                           >
                                              {/* Delete Button */}
                                              <button
                                                 onClick={() => {
-                                                   if (!window.confirm(`Bạn có chắc muốn xóa hóa đơn ${bill.billNumber}?\n\nPhòng: ${bill.roomInfo?.roomName || (bill as any).bookingDetails?.roomName}\nSố tiền: ${formatCurrency(bill.finalAmount)}`)) return;
+                                                   if (!window.confirm(`Bạn có chắc muốn xóa hóa đơn ${bill.billNumber}?\n\nPhòng: ${getRoomCategoryLabel(bill)}\nSố tiền: ${formatCurrency(bill.finalAmount)}`)) return;
                                                    console.log('🗑️ Deleting bill:', bill.billNumber);
                                                    const idKey = bill._id || bill.billNumber;
 
@@ -1053,74 +1075,79 @@ const FloatingBills = () => {
                                              </button>
 
                                              {/* Header */}
-                                             <div className="flex justify-between items-start mb-3 pr-10">
+                                             <div className="flex justify-between items-start mb-4 pr-10">
                                                 <div>
-                                                   <h3 className="font-bold text-lg">{bill.billNumber}</h3>
-                                                   <p className="text-sm text-gray-600">
-                                                      Phát hành: {formatDate(bill.issuedDate)}
+                                                   <h3 className="font-bold text-xl text-[#2fd680]">{bill.roomInfo?.roomName || bill.bookingDetails?.roomName || bill.billNumber}</h3>
+                                                   <p className="text-sm text-gray-600 mt-1">
+                                                      Đặt phòng ngày: {formatDate(bill.issuedDate)}
                                                    </p>
                                                 </div>
                                                 <div className="flex gap-2 flex-wrap justify-end">
-                                                   <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(bill.status)}`}>
+                                                   <span className={`px-3 py-1 rounded-full text-xs font-semibold transition-all ${getStatusColor(bill.status)}`}>
                                                       {getStatusText(bill.status)}
                                                    </span>
-                                                   <span className={`px-2 py-1 rounded-full text-xs font-medium ${getPaymentStatusColor(bill.paymentStatus)}`}>
+                                                   <span className={`px-3 py-1 rounded-full text-xs font-semibold transition-all ${getPaymentStatusColor(bill.paymentStatus)}`}>
                                                       {getPaymentStatusText(bill.paymentStatus)}
                                                    </span>
                                                 </div>
                                              </div>
 
                                              {/* Info Grid */}
-                                             <div className="space-y-2 mb-3 text-sm">
-                                                <div className="flex items-start gap-2">
-                                                   <span className="text-gray-600 min-w-[100px]">Khách hàng:</span>
-                                                   <span className="font-medium">{bill.customerInfo.fullName}</span>
-                                                </div>
-                                                <div className="flex items-start gap-2">
-                                                   <span className="text-gray-600 min-w-[100px]">SĐT:</span>
-                                                   <span className="font-medium">{bill.customerInfo.phone}</span>
-                                                </div>
-                                                <div className="flex items-start gap-2">
-                                                   <span className="text-gray-600 min-w-[100px]">Phòng:</span>
-                                                   <span className="font-medium">{bill.roomInfo?.roomName || (bill as any).bookingDetails?.roomName}</span>
-                                                </div>
+                                             <div className="space-y-2 mb-4 text-sm border-b pb-3">
+                                                <p className="flex items-center justify-between">
+                                                   <span className="font-semibold text-gray-700">Khách hàng:</span>
+                                                   <span className="text-gray-900 font-medium">{bill.customerInfo.fullName}</span>
+                                                </p>
+                                                <p className="flex items-center justify-between">
+                                                   <span className="font-semibold text-gray-700">SĐT:</span>
+                                                   <span className="text-gray-900 font-medium">{bill.customerInfo.phone}</span>
+                                                </p>
+                                                <p className="flex items-center justify-between">
+                                                   <span className="font-semibold text-gray-700">Phòng:</span>
+                                                   <span className="text-[#2fd680] font-medium">{getRoomCategoryLabel(bill)}</span>
+                                                </p>
                                              </div>
 
                                              {/* Dates and Pricing */}
-                                             <div className="border-t pt-3 space-y-2 text-sm">
-                                                <div className="flex justify-between">
-                                                   <span className="text-gray-600">Ngày:</span>
-                                                   <span className="font-medium">
-                                                      {formatDate(bill.checkIn || (bill as any).bookingDetails?.checkIn)} - {formatDate(bill.checkOut || (bill as any).bookingDetails?.checkOut)} ({bill.nights || (bill as any).bookingDetails?.nights} đêm)
+                                             <div className="space-y-2 text-sm">
+                                                <p className="flex items-center justify-between">
+                                                   <span className="font-semibold text-gray-700">Ngày:</span>
+                                                   <span className="text-gray-900 font-medium">
+                                                      {formatDate(bill.checkIn || (bill as any).bookingDetails?.checkIn)} - {formatDate(bill.checkOut || (bill as any).bookingDetails?.checkOut)}
                                                    </span>
-                                                </div>
-                                                <div className="flex justify-between">
-                                                   <span className="text-gray-600">Số khách:</span>
-                                                   <span className="font-medium">{bill.guests || (bill as any).bookingDetails?.guests} người</span>
-                                                </div>
-                                                <div className="flex justify-between">
-                                                   <span className="text-gray-600">Tiền phòng:</span>
-                                                   <span>{formatCurrency(bill.totalPrice || (((bill as any).bookingDetails?.nightlyPrice || bill.roomInfo?.nightlyPrice || 0) * (bill.nights || (bill as any).bookingDetails?.nights || 1)))}</span>
-                                                </div>
-                                                <div className="flex justify-between">
-                                                   <span className="text-gray-600">Thuế VAT (8%):</span>
-                                                   <span>{formatCurrency(bill.tax)}</span>
-                                                </div>
-                                                {/* Booking details summary */}
-                                                <div className="pt-2">
-                                                   <p className="text-gray-600 text-sm font-medium mb-1">Chi tiết đặt phòng</p>
-                                                   <div className="text-sm text-gray-700">
-                                                      <div>Giá/đêm: {formatCurrency((bill as any).bookingDetails?.nightlyPrice || bill.roomInfo?.nightlyPrice || 0)}</div>
-                                                      <div>Số đêm: {(bill as any).bookingDetails?.nights || bill.nights}</div>
-                                                      {(bill as any).bookingDetails?.specialRequests && <div>Ghi chú: {(bill as any).bookingDetails.specialRequests}</div>}
-                                                   </div>
-                                                </div>
-                                                <div className="flex justify-between items-center pt-2 border-t">
-                                                   <span className="font-semibold">Tiền phòng này:</span>
-                                                   <span className="text-lg font-bold text-gray-800">
+                                                </p>
+                                                <p className="flex items-center justify-between">
+                                                   <span className="font-semibold text-gray-700">Số đêm:</span>
+                                                   <span className="text-gray-900 font-medium">{bill.nights || (bill as any).bookingDetails?.nights} đêm</span>
+                                                </p>
+                                                <p className="flex items-center justify-between">
+                                                   <span className="font-semibold text-gray-700">Số khách:</span>
+                                                   <span className="text-gray-900 font-medium">{bill.guests || (bill as any).bookingDetails?.guests} người</span>
+                                                </p>
+                                                <p className="flex items-center justify-between border-t pt-2 mt-2">
+                                                   <span className="font-semibold text-gray-700">Giá/đêm:</span>
+                                                   <span className="text-gray-900 font-medium">{formatCurrency((bill as any).bookingDetails?.nightlyPrice || bill.roomInfo?.nightlyPrice || 0)}</span>
+                                                </p>
+                                                <p className="flex items-center justify-between">
+                                                   <span className="font-semibold text-gray-700">Tiền phòng:</span>
+                                                   <span className="text-gray-900 font-medium">{formatCurrency(bill.totalPrice || (((bill as any).bookingDetails?.nightlyPrice || bill.roomInfo?.nightlyPrice || 0) * (bill.nights || (bill as any).bookingDetails?.nights || 1)))}</span>
+                                                </p>
+                                                <p className="flex items-center justify-between">
+                                                   <span className="font-semibold text-gray-700">Thuế VAT (8%):</span>
+                                                   <span className="text-gray-900 font-medium">{formatCurrency(bill.tax)}</span>
+                                                </p>
+                                                {(bill as any).bookingDetails?.specialRequests && (
+                                                   <p className="flex items-start justify-between bg-yellow-50 p-2 rounded border border-yellow-200">
+                                                      <span className="font-semibold text-gray-700">Ghi chú:</span>
+                                                      <strong className="text-gray-900 text-right max-w-[200px] break-words">{(bill as any).bookingDetails.specialRequests}</strong>
+                                                   </p>
+                                                )}
+                                                <p className="flex items-center justify-between border-t pt-3 mt-3">
+                                                   <span className="font-bold text-gray-800">Tổng cộng:</span>
+                                                   <span className="text-xl font-bold text-red-600">
                                                       {formatCurrency(bill.finalAmount)}
                                                    </span>
-                                                </div>
+                                                </p>
                                              </div>
                                           </div>
                                        ))}
@@ -1266,6 +1293,27 @@ const FloatingBills = () => {
 
                                                             {/* Info */}
                                                             <div className="border-t pt-3 space-y-2 text-sm">
+                                                               <div className="flex justify-between items-center gap-2">
+                                                                  <span className="text-gray-600 whitespace-nowrap">Áp dụng cho:</span>
+                                                                  <select
+                                                                     value={item.billId || ""}
+                                                                     onChange={(e) => {
+                                                                        const value = e.target.value;
+                                                                        setExtras(prev => prev.map(ex =>
+                                                                           ex.id === item.id ? { ...ex, billId: value } : ex
+                                                                        ));
+                                                                     }}
+                                                                     className="border rounded-md px-2 py-1 text-sm flex-1"
+                                                                  >
+                                                                     <option value="" disabled>Chọn phòng</option>
+                                                                     {bills.map(b => {
+                                                                        const id = b._id || b.billNumber;
+                                                                        return (
+                                                                           <option key={id} value={id}>{getBillDisplayLabel(b)}</option>
+                                                                        );
+                                                                     })}
+                                                                  </select>
+                                                               </div>
                                                                <div className="flex justify-between">
                                                                   <span className="text-gray-600">Đơn giá:</span>
                                                                   <span className="font-medium">{formatCurrency(item.price)}</span>
@@ -1343,6 +1391,27 @@ const FloatingBills = () => {
 
                                                             {/* Info */}
                                                             <div className="border-t pt-3 space-y-2 text-sm">
+                                                               <div className="flex justify-between items-center gap-2">
+                                                                  <span className="text-gray-600 whitespace-nowrap">Áp dụng cho:</span>
+                                                                  <select
+                                                                     value={item.billId || ""}
+                                                                     onChange={(e) => {
+                                                                        const value = e.target.value;
+                                                                        setExtras(prev => prev.map(ex =>
+                                                                           ex.id === item.id ? { ...ex, billId: value } : ex
+                                                                        ));
+                                                                     }}
+                                                                     className="border rounded-md px-2 py-1 text-sm flex-1"
+                                                                  >
+                                                                     <option value="" disabled>Chọn phòng</option>
+                                                                     {bills.map(b => {
+                                                                        const id = b._id || b.billNumber;
+                                                                        return (
+                                                                           <option key={id} value={id}>{getBillDisplayLabel(b)}</option>
+                                                                        );
+                                                                     })}
+                                                                  </select>
+                                                               </div>
                                                                <div className="flex justify-between">
                                                                   <span className="text-gray-600">Đơn giá:</span>
                                                                   <span className="font-medium">{formatCurrency(item.price)}</span>
@@ -1484,11 +1553,16 @@ const FloatingBills = () => {
                                        </h4>
 
                                        {/* Countdown Timer */}
-                                       <div className={`mb-4 inline-block px-4 py-2 rounded-lg font-bold text-lg ${countdownSeconds <= 60
-                                             ? 'bg-red-100 text-red-700'
-                                             : 'bg-yellow-100 text-yellow-700'
-                                          }`}>
-                                          ⏳ {Math.floor(countdownSeconds / 60)}:{String(countdownSeconds % 60).padStart(2, '0')}
+                                       <div className="flex justify-center mb-6">
+                                          <div className={`px-6 py-3 rounded-xl font-bold text-2xl flex items-center gap-2 transition-all ${countdownSeconds <= 60
+                                             ? 'bg-red-500 text-white shadow-lg shadow-red-300 animate-pulse'
+                                             : countdownSeconds <= 120
+                                                ? 'bg-orange-400 text-white shadow-lg shadow-orange-300'
+                                                : 'bg-green-500 text-white shadow-lg shadow-green-300'
+                                             }`}>
+                                             <span>⏱️</span>
+                                             <span>{Math.floor(countdownSeconds / 60)}:{String(countdownSeconds % 60).padStart(2, '0')}</span>
+                                          </div>
                                        </div>
 
                                        {/* QR Code Display */}
@@ -1511,15 +1585,40 @@ const FloatingBills = () => {
                                        </p>
 
                                        {/* Bank Account Info */}
-                                       <div className="mt-3 bg-white rounded-xl p-3 shadow-md border border-[#2fd680]">
-                                          <div className="space-y-2 text-sm text-gray-700">
-                                             <p className="flex items-center justify-between">
-                                                <span>Chủ tài khoản:</span>
-                                                <strong className="text-[#2fd680]">HOTEL BOOKING</strong>
+                                       <div className="mt-4 bg-gradient-to-br from-blue-50 to-cyan-50 rounded-xl p-4 shadow-md border-2 border-[#2fd680]">
+                                          <h5 className="font-bold text-[#2fd680] mb-3 text-center">Thông Tin Chuyển Khoản</h5>
+                                          <div className="space-y-3 text-sm">
+                                             {/* Account Holder */}
+                                             <p className="flex items-center justify-between border-b pb-2">
+                                                <span className="font-semibold text-gray-700">Chủ tài khoản:</span>
+                                                <strong className="text-[#2fd680] text-right">HOTEL BOOKING</strong>
                                              </p>
-                                             <p className="flex items-center justify-between border-t pt-2 bg-yellow-50 px-2 py-1 rounded">
-                                                <span>Ghi chú:</span>
-                                                <strong className="text-[#2fd680] font-mono">HD{selectedGroup?.bills?.[0]?.billNumber || bills[0]?.billNumber}</strong>
+
+                                             {/* Account Number */}
+                                             <p className="flex items-center justify-between border-b pb-2">
+                                                <span className="font-semibold text-gray-700">Số tài khoản:</span>
+                                                <strong className="text-[#2fd680] font-mono text-right">0396256658</strong>
+                                             </p>
+
+                                             {/* Amount */}
+                                             <p className="flex items-center justify-between border-b pb-2">
+                                                <span className="font-semibold text-gray-700">Số tiền:</span>
+                                                <strong className="text-red-600 font-bold text-right">
+                                                   {(() => {
+                                                      const billAmount = (selectedGroup?.bills?.[0]?.finalAmount) || (bills[0]?.finalAmount) || 0;
+                                                      const extrasTotal = extras.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+                                                      const totalAmount = billAmount + extrasTotal;
+                                                      return totalAmount.toLocaleString('vi-VN');
+                                                   })()} ₫
+                                                </strong>
+                                             </p>
+
+                                             {/* Transfer Content */}
+                                             <p className="flex items-start justify-between bg-yellow-50 p-2 rounded border border-yellow-200">
+                                                <span className="font-semibold text-gray-700">Nội dung:</span>
+                                                <strong className="text-[#2fd680] font-mono text-right max-w-[200px] break-words">
+                                                   Chuyển tiền đặt phòng tại HotelHub
+                                                </strong>
                                              </p>
                                           </div>
                                        </div>
@@ -1529,53 +1628,107 @@ const FloatingBills = () => {
                                     <div className="grid md:grid-cols-2 gap-3">
                                        {/* Privacy Policy */}
                                        <div className="border-2 border-[#2fd680] rounded-xl p-4 hover:shadow-lg transition-all bg-gradient-to-br from-white to-teal-50">
-                                          <h4 className="font-bold text-gray-800 mb-3 text-lg">
+                                          <h4 className="font-bold text-[#2fd680] mb-3 text-lg flex items-center gap-2">
+                                             <Shield className="w-5 h-5" />
                                              Chính sách bảo mật
                                           </h4>
-                                          <div className="text-sm text-gray-600 space-y-2">
-                                             <p>✓ Thông tin thanh toán được mã hóa SSL 256-bit</p>
-                                             <p>✓ Không lưu trữ thông tin thẻ thanh toán</p>
-                                             <p>✓ Tuân thủ chuẩn bảo mật PCI DSS</p>
-                                             <p>✓ Thông tin cá nhân được bảo vệ nghiêm ngặt</p>
+                                          <div className="text-sm text-gray-700 space-y-2">
+                                             <p className="flex items-start gap-2">
+                                                <CheckCircle className="w-4 h-4 text-[#2fd680] flex-shrink-0 mt-0.5" />
+                                                <span>Thông tin thanh toán được mã hóa <strong>SSL 256-bit</strong></span>
+                                             </p>
+                                             <p className="flex items-start gap-2">
+                                                <CheckCircle className="w-4 h-4 text-[#2fd680] flex-shrink-0 mt-0.5" />
+                                                <span><strong>Không lưu</strong> thông tin thẻ thanh toán</span>
+                                             </p>
+                                             <p className="flex items-start gap-2">
+                                                <CheckCircle className="w-4 h-4 text-[#2fd680] flex-shrink-0 mt-0.5" />
+                                                <span>Tuân thủ tiêu chuẩn <strong>PCI DSS</strong></span>
+                                             </p>
+                                             <p className="flex items-start gap-2">
+                                                <CheckCircle className="w-4 h-4 text-[#2fd680] flex-shrink-0 mt-0.5" />
+                                                <span>Dữ liệu cá nhân được <strong>bảo vệ tối đa</strong></span>
+                                             </p>
                                           </div>
                                        </div>
 
                                        {/* Refund Policy */}
                                        <div className="border-2 border-[#2fd680] rounded-xl p-4 hover:shadow-lg transition-all bg-gradient-to-br from-white to-teal-50">
-                                          <h4 className="font-bold text-gray-800 mb-3 text-lg">
+                                          <h4 className="font-bold text-[#2fd680] mb-3 text-lg flex items-center gap-2">
+                                             <DollarSign className="w-5 h-5" />
                                              Chính sách hoàn trả
                                           </h4>
-                                          <div className="text-sm text-gray-600 space-y-2">
-                                             <p>• <strong>Hủy trước 7 ngày:</strong> Hoàn 100%</p>
-                                             <p>• <strong>Hủy trước 3-6 ngày:</strong> Hoàn 50%</p>
-                                             <p>• <strong>Hủy trước 1-2 ngày:</strong> Hoàn 25%</p>
-                                             <p>• <strong>Hủy trong ngày:</strong> Không hoàn tiền</p>
-                                             <p className="text-[#2fd680] font-medium mt-2">Xử lý: 5-7 ngày làm việc</p>
+                                          <div className="text-sm text-gray-700 space-y-2">
+                                             <p className="flex items-start gap-2">
+                                                <CheckCircle className="w-4 h-4 text-[#2fd680] flex-shrink-0 mt-0.5" />
+                                                <span><strong>Hủy trước 7 ngày:</strong> Hoàn <strong className="text-green-600">100%</strong></span>
+                                             </p>
+                                             <p className="flex items-start gap-2">
+                                                <CheckCircle className="w-4 h-4 text-[#2fd680] flex-shrink-0 mt-0.5" />
+                                                <span><strong>Hủy trước 3-6 ngày:</strong> Hoàn <strong className="text-green-600">50%</strong></span>
+                                             </p>
+                                             <p className="flex items-start gap-2">
+                                                <CheckCircle className="w-4 h-4 text-[#2fd680] flex-shrink-0 mt-0.5" />
+                                                <span><strong>Hủy trước 1-2 ngày:</strong> Hoàn <strong className="text-orange-600">25%</strong></span>
+                                             </p>
+                                             <p className="flex items-start gap-2">
+                                                <CheckCircle className="w-4 h-4 text-[#2fd680] flex-shrink-0 mt-0.5" />
+                                                <span><strong>Hủy trong ngày:</strong> <strong className="text-red-600">Không hoàn</strong></span>
+                                             </p>
+                                             <p className="text-[#2fd680] font-medium mt-2 bg-yellow-50 px-2 py-1 rounded">
+                                                Xử lý: <strong>5-7 ngày làm việc</strong>
+                                             </p>
                                           </div>
                                        </div>
 
                                        {/* Exchange Policy */}
                                        <div className="border-2 border-[#2fd680] rounded-xl p-4 hover:shadow-lg transition-all bg-gradient-to-br from-white to-emerald-50">
-                                          <h4 className="font-bold text-gray-800 mb-3 text-lg">
+                                          <h4 className="font-bold text-[#2fd680] mb-3 text-lg flex items-center gap-2">
+                                             <RefreshCw className="w-5 h-5" />
                                              Chính sách đổi trả
                                           </h4>
-                                          <div className="text-sm text-gray-600 space-y-2">
-                                             <p>✓ Đổi phòng miễn phí (thông báo trước 24h)</p>
-                                             <p>✓ Nâng hạng phòng với phí chênh lệch</p>
-                                             <p>✓ Đổi ngày đặt tùy phòng trống</p>
-                                             <p>✓ Liên hệ hotline hỗ trợ nhanh</p>
+                                          <div className="text-sm text-gray-700 space-y-2">
+                                             <p className="flex items-start gap-2">
+                                                <CheckCircle className="w-4 h-4 text-[#2fd680] flex-shrink-0 mt-0.5" />
+                                                <span><strong>Đổi phòng miễn phí</strong> (thông báo trước <strong>24h</strong>)</span>
+                                             </p>
+                                             <p className="flex items-start gap-2">
+                                                <CheckCircle className="w-4 h-4 text-[#2fd680] flex-shrink-0 mt-0.5" />
+                                                <span>Nâng hạng phòng với <strong>phí chênh lệch</strong></span>
+                                             </p>
+                                             <p className="flex items-start gap-2">
+                                                <CheckCircle className="w-4 h-4 text-[#2fd680] flex-shrink-0 mt-0.5" />
+                                                <span><strong>Đổi ngày</strong> tùy vào phòng trống</span>
+                                             </p>
+                                             <p className="flex items-start gap-2">
+                                                <CheckCircle className="w-4 h-4 text-[#2fd680] flex-shrink-0 mt-0.5" />
+                                                <span><strong>Liên hệ hotline</strong> để hỗ trợ nhanh</span>
+                                             </p>
                                           </div>
                                        </div>
 
                                        {/* Support */}
                                        <div className="border-2 border-[#2fd680] rounded-xl p-4 hover:shadow-lg transition-all bg-gradient-to-br from-white to-emerald-50">
-                                          <h4 className="font-bold text-gray-800 mb-3 text-lg">
+                                          <h4 className="font-bold text-[#2fd680] mb-3 text-lg flex items-center gap-2">
+                                             <Headphones className="w-5 h-5" />
                                              Hỗ trợ thanh toán
                                           </h4>
-                                          <div className="text-sm text-gray-600 space-y-2">
-                                             <p>Hotline: <strong>1900-xxxx</strong> (24/7)</p>
-                                             <p>Email: <strong>support@hotelhub.vn</strong></p>
-                                             <p>Zalo/Viber: <strong>0901-234-567</strong></p>
+                                          <div className="text-sm text-gray-700 space-y-2">
+                                             <p className="flex items-start gap-2">
+                                                <CheckCircle className="w-4 h-4 text-[#2fd680] flex-shrink-0 mt-0.5" />
+                                                <span>Hotline: <strong className="text-[#2fd680]">1900-xxxx</strong> <span className="text-gray-500 text-xs">(24/7)</span></span>
+                                             </p>
+                                             <p className="flex items-start gap-2">
+                                                <CheckCircle className="w-4 h-4 text-[#2fd680] flex-shrink-0 mt-0.5" />
+                                                <span>Email: <strong className="text-[#2fd680]">support@hotelhub.vn</strong></span>
+                                             </p>
+                                             <p className="flex items-start gap-2">
+                                                <CheckCircle className="w-4 h-4 text-[#2fd680] flex-shrink-0 mt-0.5" />
+                                                <span>Zalo/Viber: <strong className="text-[#2fd680]">0901-234-567</strong></span>
+                                             </p>
+                                             <p className="text-[#2fd680] font-medium mt-2 bg-blue-50 px-2 py-1 rounded text-center">
+                                                Phản hồi trong <strong>1-2 phút</strong>
+                                             </p>
                                           </div>
                                        </div>
                                     </div>
@@ -1657,16 +1810,6 @@ const FloatingBills = () => {
                                           className="w-full bg-[#2fd680] text-white py-3 px-6 rounded-xl font-bold text-base hover:bg-[#25a060] disabled:bg-gray-400 transition-all duration-300 shadow-lg hover:shadow-2xl"
                                        >
                                           {paymentPollingActive ? '⏳ Đang xác nhận...' : 'Đã thanh toán'}
-                                       </button>
-                                       <button
-                                          onClick={() => {
-                                             setActiveTab('bills');
-                                             setPaymentPollingActive(false);
-                                             setPaymentMessage(null);
-                                          }}
-                                          className="w-full text-gray-600 py-2 px-4 rounded-lg hover:bg-gray-100 transition-colors"
-                                       >
-                                          Quay lại
                                        </button>
                                     </div>
                                  </>

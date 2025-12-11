@@ -20,6 +20,7 @@ export const createBooking = async (
     const {
       roomId,
       roomType,
+      roomName,
       roomPrice: customRoomPrice,
       fullName,
       email,
@@ -84,6 +85,7 @@ export const createBooking = async (
 
     const bookingPayload: any = {
       user: userId, // Add user to booking
+      roomName: roomName || roomType,
       fullName,
       email,
       phone,
@@ -185,7 +187,7 @@ export const createBooking = async (
       console.log("💳 Full Req.user object:", (req as any).user);
       console.log("💳 Booking ID:", booking._id);
       console.log("💳 Room details:", {
-        roomName: room?.name,
+        roomName: room?.name || roomName,
         roomType,
         nightlyPrice: roomPrice,
         nights,
@@ -209,12 +211,12 @@ export const createBooking = async (
         },
         roomInfo: {
           roomId: room?._id,
-          roomName: room?.name || roomType || "Standard Room",
+          roomName: roomName || room?.name || roomType || "Standard Room",
           roomType: room?.type || roomType || "Standard",
           nightlyPrice: roomPrice,
         },
         bookingDetails: {
-          roomName: room?.name || roomType || "Standard Room",
+          roomName: roomName || room?.name || roomType || "Standard Room",
           roomType: room?.type || roomType || "Standard",
           nightlyPrice: roomPrice,
           nights,

@@ -10,23 +10,20 @@ export default function PaymentQR() {
          try {
             setLoading(true);
             setError("");
-            // The endpoint redirects to img.vietqr.io, fetch will follow automatically
-            const createQRUrl = new URL(window.location.origin + "/api/webhooks/create-qrcode");
-            const res = await fetch(createQRUrl, {
+            const res = await fetch("/api/webhooks/create-qrcode", {
                method: "POST",
                headers: { "Content-Type": "application/json" },
                body: JSON.stringify({
                   amount: 200000,
                   memo: "Thanh toan don 123",
                }),
-               // Allow fetch to follow redirects (default behavior)
             });
 
             if (!res.ok) {
                throw new Error(`HTTP ${res.status}`);
             }
 
-            // After redirect, response should be image data
+            // Response is now image/png, convert to blob URL
             const blob = await res.blob();
             const imageUrl = URL.createObjectURL(blob);
             setQr(imageUrl);
