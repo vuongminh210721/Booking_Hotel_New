@@ -9,8 +9,8 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || "/api";
 
 // Định nghĩa loại phòng với giá tiền
 const ROOM_TYPES = {
-   "Phòng cơ bản": { price: 850000, description: "Phòng tiêu chuẩn với tiện nghi cơ bản" },
-   "Phòng trung cấp": { price: 1500000, description: "Phòng rộng rãi với tiện nghi đầy đủ" },
+   "Phòng cơ bản": { price: 1000000, description: "Phòng tiêu chuẩn với tiện nghi cơ bản" },
+   "Phòng trung cấp": { price: 1800000, description: "Phòng rộng rãi với tiện nghi đầy đủ" },
    "Phòng cao cấp": { price: 3500000, description: "Phòng sang trọng với view đẹp và tiện nghi 5 sao" },
 };
 
@@ -19,7 +19,7 @@ export default function Booking_Home() {
    const [fullName, setFullName] = useState("");
    const [email, setEmail] = useState("");
    const [phone, setPhone] = useState("");
-   const [roomType, setRoomType] = useState<keyof typeof ROOM_TYPES>("Phòng trung cấp");
+   const [roomType, setRoomType] = useState<keyof typeof ROOM_TYPES>("Phòng cơ bản");
    const [roomName, setRoomName] = useState<string>(""); // Actual room name selected (e.g., "EXECUTIVE PLUS")
    const [roomPrice, setRoomPrice] = useState<string>("");
    const [roomId, setRoomId] = useState<string>("");
@@ -165,7 +165,7 @@ export default function Booking_Home() {
       setFullName("");
       setEmail("");
       setPhone("");
-      setRoomType("Phòng trung cấp");
+      setRoomType("Phòng cơ bản");
       setRoomName("");
       setRoomPrice("");
       setRoomId("");
@@ -566,33 +566,57 @@ export default function Booking_Home() {
                            <div className="space-y-4">
                               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                  <div>
-                                    <label className="block text-sm font-bold text-gray-700 mb-2">Loại phòng</label>
-                                    <div className="relative">
-                                       <div className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400"><Hotel className="w-5 h-5" /></div>
-                                       <select
-                                          className="w-full pl-12 pr-4 py-3 border border-gray-300 rounded-xl focus:border-slate-500 focus:ring-4 focus:ring-slate-100 outline-none transition-all duration-300 font-medium appearance-none bg-white cursor-pointer"
-                                          value={roomType}
-                                          onChange={(e) => {
-                                             const newType = e.target.value as keyof typeof ROOM_TYPES;
-                                             setRoomType(newType);
-                                             setRoomPrice(""); // Reset room price khi đổi loại phòng
-                                          }}
-                                       >
-                                          {Object.keys(ROOM_TYPES).map(type => (
-                                             <option key={type} value={type}>
-                                                {type}
-                                             </option>
-                                          ))}
-                                       </select>
-                                    </div>
-                                    <p className="text-xs text-gray-500 mt-1">{ROOM_TYPES[roomType]?.description || ""}</p>
+                                    <label className="block text-sm font-bold text-gray-700 mb-2">
+                                       {roomName ? "Phòng đã chọn" : "Loại phòng"}
+                                    </label>
+                                    {roomName && roomPrice ? (
+                                       // Hiển thị tên phòng cụ thể (không cho thay đổi)
+                                       <div className="relative">
+                                          <div className="absolute left-4 top-1/2 -translate-y-1/2 text-teal-600"><Hotel className="w-5 h-5" /></div>
+                                          <div className="w-full pl-12 pr-4 py-3 border-2 border-teal-300 rounded-xl bg-teal-50 font-bold text-teal-700">
+                                             {roomName}
+                                          </div>
+                                       </div>
+                                    ) : (
+                                       // Dropdown chọn loại phòng chung
+                                       <div className="relative">
+                                          <div className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400"><Hotel className="w-5 h-5" /></div>
+                                          <select
+                                             className="w-full pl-12 pr-4 py-3 border border-gray-300 rounded-xl focus:border-slate-500 focus:ring-4 focus:ring-slate-100 outline-none transition-all duration-300 font-medium appearance-none bg-white cursor-pointer"
+                                             value={roomType}
+                                             onChange={(e) => {
+                                                const newType = e.target.value as keyof typeof ROOM_TYPES;
+                                                setRoomType(newType);
+                                                setRoomPrice(""); // Reset room price khi đổi loại phòng
+                                             }}
+                                          >
+                                             {Object.keys(ROOM_TYPES).map(type => (
+                                                <option key={type} value={type}>
+                                                   {type}
+                                                </option>
+                                             ))}
+                                          </select>
+                                       </div>
+                                    )}
+                                    {!roomName && <p className="text-xs text-gray-500 mt-1">{ROOM_TYPES[roomType]?.description || ""}</p>}
                                  </div>
                                  <div>
                                     <label className="block text-sm font-bold text-gray-700 mb-2">Số khách</label>
-                                    <div className="relative">
-                                       <div className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400"><Users className="w-5 h-5" /></div>
-                                       <input type="number" min={1} max={10} className="w-full pl-12 pr-4 py-3 border border-gray-300 rounded-xl focus:border-slate-500 focus:ring-4 focus:ring-slate-100 outline-none transition-all duration-300 font-medium" value={guests} onChange={(e) => setGuests(Number(e.target.value))} />
-                                    </div>
+                                    {roomName && roomPrice ? (
+                                       // Hiển thị số khách cố định (không cho thay đổi)
+                                       <div className="relative">
+                                          <div className="absolute left-4 top-1/2 -translate-y-1/2 text-teal-600"><Users className="w-5 h-5" /></div>
+                                          <div className="w-full pl-12 pr-4 py-3 border-2 border-teal-300 rounded-xl bg-teal-50 font-bold text-teal-700">
+                                             {guests} người
+                                          </div>
+                                       </div>
+                                    ) : (
+                                       // Cho phép nhập số khách
+                                       <div className="relative">
+                                          <div className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400"><Users className="w-5 h-5" /></div>
+                                          <input type="number" min={1} max={10} className="w-full pl-12 pr-4 py-3 border border-gray-300 rounded-xl focus:border-slate-500 focus:ring-4 focus:ring-slate-100 outline-none transition-all duration-300 font-medium" value={guests} onChange={(e) => setGuests(Number(e.target.value))} />
+                                       </div>
+                                    )}
                                  </div>
                               </div>
                               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

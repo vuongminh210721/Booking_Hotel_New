@@ -50,6 +50,11 @@ export const authService = {
   clearAuth() {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
+    // Clear bill-related caches on logout to prevent data from previous session
+    localStorage.removeItem("bills_cache");
+    localStorage.removeItem("last_bill");
+    localStorage.removeItem("extras_cache");
+    localStorage.removeItem("deleted_bills");
   },
 
   // Check if logged in

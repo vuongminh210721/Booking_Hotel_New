@@ -9,6 +9,7 @@ import {
   deleteBill,
   getBillStatus,
   userConfirmPayment,
+  cancelBillByUser,
 } from "../controllers/billController";
 import { authMiddleware, adminMiddleware } from "../middlewares/authMiddleware";
 
@@ -35,6 +36,12 @@ router.post(
   noCacheMiddleware,
   authMiddleware,
   userConfirmPayment
+);
+router.delete(
+  "/:id/cancel",
+  noCacheMiddleware,
+  authMiddleware,
+  cancelBillByUser
 );
 router.post("/", createBill);
 

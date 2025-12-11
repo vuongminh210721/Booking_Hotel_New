@@ -274,12 +274,12 @@ export default function RoomCard({
                 <div className="flex flex-col items-end gap-3">
                   <div className="text-right">
                     <div className="flex items-baseline gap-2">
-                      <span className="text-2xl md:text-3xl font-bold bg-gradient-to-r from-red-500 to-orange-500 bg-clip-text text-transparent">
+                      <span className="text-2xl md:text-3xl font-bold text-red-600">
                         {price}
                       </span>
                       <span className="text-xs text-gray-500">đồng/đêm</span>
                     </div>
-                    <p className="text-xs text-gray-400 mt-1">Đã bao gồm thuế phí</p>
+                    <p className="text-xs text-gray-400 mt-1">Chưa bao gồm thuế</p>
                   </div>
 
                   <RoomBookButton id={id} name={name} price={price} guests={guests} />

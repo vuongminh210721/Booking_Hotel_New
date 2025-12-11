@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Receipt, X, ArrowLeft, Trash2, CheckCircle, Shield, RefreshCw, DollarSign, Headphones } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import qrPaymentImage from "@/assets/Screenshot 2025-12-10 235114.png";
+import { rooms } from "@/data/room";
 
 // QR Code image from assets
 const QR_CODE_IMAGE = qrPaymentImage;
@@ -61,33 +62,57 @@ const FloatingBills = () => {
    const [activeTab, setActiveTab] = useState<'bills' | 'payment'>('bills');
    const [extras, setExtras] = useState<ExtraItem[]>([]);
    const [recentlyAdded, setRecentlyAdded] = useState<Record<string, boolean>>({});
+   const [selectedBillForExtras, setSelectedBillForExtras] = useState<string>(''); // Bill ID cho dịch vụ/ẩm thực
    const { user } = useAuth();
    const API_BASE_URL = import.meta.env.VITE_API_URL || "/api";
+   const contentRef = useRef<HTMLDivElement>(null);
 
-   // Hydrate from last cached bill in case network fetch is slow/empty
+   // Hydrate from last cached bill and extras in case network fetch is slow/empty
    useEffect(() => {
       try {
          // Prefer the full cached bills list, then fall back to last_bill
          const deletedRaw = localStorage.getItem('deleted_bills');
          const deletedList: string[] = deletedRaw ? JSON.parse(deletedRaw) : [];
 
+         let loadedBills: any[] = [];
+
          const cachedBillsRaw = localStorage.getItem("bills_cache");
          if (cachedBillsRaw) {
             const cachedBills = JSON.parse(cachedBillsRaw) as any[];
             const filtered = cachedBills.filter(b => !deletedList.includes(b._id || b.billNumber));
             if (filtered && filtered.length > 0) {
-               console.log("💾 Loaded cached bills_cache from localStorage (filtered deleted)");
-               setBills(filtered);
-               return;
+               console.log("💾 Loaded cached bills_cache from localStorage (filtered deleted):", filtered.length, "bills");
+               loadedBills = filtered;
             }
          }
 
-         const last = localStorage.getItem("last_bill");
-         if (last) {
-            const bill = JSON.parse(last);
-            if (bill && bill.billNumber && !deletedList.includes(bill._id || bill.billNumber)) {
-               console.log("💾 Loaded cached last_bill from localStorage");
-               setBills([bill]);
+         // Only use last_bill if bills_cache is empty
+         if (loadedBills.length === 0) {
+            const last = localStorage.getItem("last_bill");
+            if (last) {
+               const bill = JSON.parse(last);
+               if (bill && bill.billNumber && !deletedList.includes(bill._id || bill.billNumber)) {
+                  console.log("💾 Loaded cached last_bill from localStorage (fallback)");
+                  loadedBills = [bill];
+               }
+            }
+         }
+
+         if (loadedBills.length > 0) {
+            setBills(loadedBills);
+         }
+
+         // Load extras from localStorage
+         const extrasRaw = localStorage.getItem("extras_cache");
+         if (extrasRaw) {
+            try {
+               const cachedExtras = JSON.parse(extrasRaw) as ExtraItem[];
+               if (Array.isArray(cachedExtras) && cachedExtras.length > 0) {
+                  console.log("💾 Loaded cached extras from localStorage:", cachedExtras.length, "items");
+                  setExtras(cachedExtras);
+               }
+            } catch (err) {
+               console.warn("⚠️ Could not load cached extras:", err);
             }
          }
       } catch (err) {
@@ -109,6 +134,21 @@ const FloatingBills = () => {
          console.warn("⚠️ Could not save bills to localStorage:", err);
       }
    }, [bills]);
+
+   // Save extras to localStorage whenever they change
+   useEffect(() => {
+      try {
+         if (extras.length > 0) {
+            localStorage.setItem("extras_cache", JSON.stringify(extras));
+            console.log("💾 Saved", extras.length, "extras to localStorage");
+         } else {
+            localStorage.removeItem("extras_cache");
+            console.log("🗑️ Cleared extras cache from localStorage");
+         }
+      } catch (err) {
+         console.warn("⚠️ Could not save extras to localStorage:", err);
+      }
+   }, [extras]);
 
    // Define fetchBills first so it can be used in useEffect
    const fetchBills = useCallback(async () => {
@@ -203,29 +243,17 @@ const FloatingBills = () => {
             const deletedList: string[] = deleted ? JSON.parse(deleted) : [];
             if (deletedList && deletedList.length > 0) {
                const before = billsData.length;
-               billsData = billsData.filter((b: any) => !deletedList.includes(b._id || b.billNumber));
+               billsData = billsData.filter((b: any) => !deletedList.includes(b._id) && !deletedList.includes(b.billNumber));
                console.log(`🔕 Filtered out ${before - billsData.length} deleted bill(s) from server results`);
             }
          } catch (err) {
             // ignore
          }
 
-         // Merge with locally deleted bills - keep local state
-         const cachedBills = localStorage.getItem("bills_cache");
-         if (cachedBills) {
-            try {
-               const localBills = JSON.parse(cachedBills);
-               const localBillIds = new Set(localBills.map((b: any) => b._id || b.billNumber));
-               // Only keep server bills that exist in local cache (user hasn't deleted them)
-               const mergedBills = billsData.filter((b: any) => localBillIds.has(b._id || b.billNumber));
-               console.log("🔄 Merged with local cache:", mergedBills.length, "bills (filtered from", billsData.length, "server bills)");
-               setBills(mergedBills);
-            } catch {
-               setBills(billsData);
-            }
-         } else {
-            setBills(billsData);
-         }
+         // Set bills from server (already filtered by deleted_bills)
+         // This ensures server data is authoritative but respects local deletions
+         console.log("✅ Setting", billsData.length, "bills from server (filtered deleted)");
+         setBills(billsData);
       } catch (error) {
          console.error("❌ Error fetching bills:", error);
          // Load from cache if fetch fails
@@ -673,36 +701,80 @@ const FloatingBills = () => {
 
    // Display name for a bill (prefer room name, fallback to bill number)
    const getBillDisplayLabel = (bill: Bill) => {
-      return bill.roomInfo?.roomName || bill.bookingDetails?.roomName || bill.billNumber || "Phòng";
+      const roomName = bill.roomInfo?.roomName || bill.bookingDetails?.roomName || "";
+      const nightlyPrice = bill.roomInfo?.nightlyPrice || bill.bookingDetails?.nightlyPrice || 0;
+      const resolved = resolveRoomName(roomName, nightlyPrice);
+      return resolved || bill.billNumber || "Phòng";
    };
 
-   // Determine a friendly room category label for display
-   const getRoomCategoryLabel = (billLike: any) => {
-      // Prefer explicit roomType if backend provided it
-      const roomType = billLike?.roomInfo?.roomType || billLike?.bookingDetails?.roomType;
-      if (roomType) return roomType;
+   // Resolve actual room name from room.ts, handling old generic names like "basic room", "triple room"
+   const resolveRoomName = (roomName: string | undefined, _nightlyPrice: number | undefined): string => {
+      if (!roomName) return "";
 
-      // Infer from nightly price if available
-      const nightly = Number(billLike?.bookingDetails?.nightlyPrice || billLike?.roomInfo?.nightlyPrice || billLike?.roomPrice || 0) || 0;
-      if (nightly === 0) {
-         // Fallback to any roomName we have, or generic label
-         // Map explicit room names to friendly category labels when needed
-         const explicitName = billLike?.roomInfo?.roomName || (billLike?.bookingDetails && billLike.bookingDetails.roomName);
-         if (explicitName) {
-            const n = (explicitName || '').toString().toLowerCase();
-            if (n.includes('basic') || n.includes('bassic') || n.includes('cơ bản') || n.includes('basic room')) return 'Phòng cơ bản';
-            if (n.includes('standard')) return 'Phòng cơ bản';
-            if (n.includes('deluxe') || n.includes('executive') || n.includes('luxury') || n.includes('premium') || n.includes('suite')) return 'Phòng cao cấp';
-            if (n.includes('studio') || n.includes('superior') || n.includes('double') || n.includes('twin')) return 'Phòng trung cấp';
-            // default if name exists but doesn't match known tokens
-            return explicitName;
-         }
-         return 'Phòng';
+      // Check if roomName exactly matches a room from room.ts
+      const exactMatch = rooms.find(r => r.name.toLowerCase() === roomName.toLowerCase());
+      if (exactMatch) return exactMatch.name;
+
+      // If roomName is generic, try to find by price range
+      const lowerName = roomName.toLowerCase();
+
+      // Map generic names to actual room by price ranges
+      if (lowerName.includes('basic') || lowerName.includes('cơ bản')) {
+         const matchByPrice = rooms.find(r => {
+            const rPrice = parseInt((r.price || '0').replace(/\./g, '')) || 0;
+            return rPrice >= 800000 && rPrice <= 1000000;
+         });
+         if (matchByPrice) return matchByPrice.name;
       }
 
-      if (nightly <= 1000000) return 'Phòng cơ bản';
-      if (nightly <= 3000000) return 'Phòng trung cấp';
-      return 'Phòng cao cấp';
+      if (lowerName.includes('triple') || lowerName.includes('trung cấp') || lowerName.includes('superior')) {
+         const matchByPrice = rooms.find(r => {
+            const rPrice = parseInt((r.price || '0').replace(/\./g, '')) || 0;
+            return rPrice >= 1200000 && rPrice <= 2000000;
+         });
+         if (matchByPrice) return matchByPrice.name;
+      }
+
+      if (lowerName.includes('deluxe') || lowerName.includes('cao cấp') || lowerName.includes('luxury')) {
+         const matchByPrice = rooms.find(r => {
+            const rPrice = parseInt((r.price || '0').replace(/\./g, '')) || 0;
+            return rPrice >= 3000000;
+         });
+         if (matchByPrice) return matchByPrice.name;
+      }
+
+      // Fallback: return original roomName
+      return roomName;
+   };
+
+   // Get room view from room.ts data
+   const getRoomCategoryLabel = (billLike: any) => {
+      // Get room name from bill
+      const roomName = billLike?.roomInfo?.roomName || billLike?.bookingDetails?.roomName || "";
+
+      if (!roomName) return 'Phòng';
+
+      // Find exact match in rooms data
+      const roomData = rooms.find(r => r.name.toLowerCase() === roomName.toLowerCase());
+
+      // Return view if found, otherwise return room name
+      if (roomData && roomData.view) {
+         return roomData.view;
+      }
+
+      // Try to find by partial name match if exact match fails
+      const lowerRoomName = roomName.toLowerCase();
+      const partialMatch = rooms.find(r => {
+         const lowerName = r.name.toLowerCase();
+         return lowerName.includes(lowerRoomName) || lowerRoomName.includes(lowerName);
+      });
+
+      if (partialMatch && partialMatch.view) {
+         return partialMatch.view;
+      }
+
+      // If no match found, return the room name itself
+      return roomName;
    };
 
    // Payment polling state
@@ -992,7 +1064,7 @@ const FloatingBills = () => {
                   </div>
 
                   {/* Content */}
-                  <div className="flex-1 overflow-y-auto p-4">
+                  <div ref={contentRef} className="flex-1 overflow-y-auto p-4">
                      {activeTab === 'bills' && (
                         <>
                            {loading ? (
@@ -1031,45 +1103,65 @@ const FloatingBills = () => {
                                           >
                                              {/* Delete Button */}
                                              <button
-                                                onClick={() => {
-                                                   if (!window.confirm(`Bạn có chắc muốn xóa hóa đơn ${bill.billNumber}?\n\nPhòng: ${getRoomCategoryLabel(bill)}\nSố tiền: ${formatCurrency(bill.finalAmount)}`)) return;
-                                                   console.log('🗑️ Deleting bill:', bill.billNumber);
-                                                   const idKey = bill._id || bill.billNumber;
+                                                onClick={async () => {
+                                                   if (!window.confirm(`Bạn có chắc muốn hủy hóa đơn ${bill.billNumber}?\n\nPhòng: ${getRoomCategoryLabel(bill)}\nSố tiền: ${formatCurrency(bill.finalAmount)}`)) return;
+                                                   console.log('🗑️ Cancelling bill:', bill.billNumber);
+                                                   const billId = bill._id || bill.billNumber;
 
-                                                   // Build new list from current state and update
                                                    try {
-                                                      const newList = bills.filter((b) => (b._id || b.billNumber) !== idKey);
+                                                      // Call API to cancel bill on server
+                                                      const token = localStorage.getItem('auth_token');
+                                                      if (!token) {
+                                                         alert('Vui lòng đăng nhập lại');
+                                                         return;
+                                                      }
+
+                                                      const response = await fetch(`http://localhost:5000/api/bills/${billId}/cancel`, {
+                                                         method: 'DELETE',
+                                                         headers: {
+                                                            'Authorization': `Bearer ${token}`,
+                                                            'Content-Type': 'application/json',
+                                                         },
+                                                      });
+
+                                                      if (!response.ok) {
+                                                         const errorData = await response.json();
+                                                         throw new Error(errorData.message || 'Không thể hủy hóa đơn');
+                                                      }
+
+                                                      // Successfully cancelled on server, update UI
+                                                      const newList = bills.filter((b) => (b._id || b.billNumber) !== billId);
                                                       setBills(newList);
+
+                                                      // Update cache
                                                       try {
                                                          localStorage.setItem('bills_cache', JSON.stringify(newList));
                                                       } catch (err) {
                                                          // ignore
                                                       }
 
-                                                      // Persist deleted id so it won't reappear on next fetch
-                                                      try {
-                                                         const raw = localStorage.getItem('deleted_bills');
-                                                         const arr: string[] = raw ? JSON.parse(raw) : [];
-                                                         if (!arr.includes(idKey)) {
-                                                            const next = [...arr, idKey];
-                                                            localStorage.setItem('deleted_bills', JSON.stringify(next));
-                                                         }
-                                                      } catch (err) {
-                                                         // ignore
-                                                      }
-
-                                                      // If all bills deleted, clear extras and reset selectedGroup
+                                                      // If all bills cancelled, clear extras and reset selectedGroup
                                                       if (newList.length === 0) {
-                                                         console.log('🗑️ All bills deleted, clearing extras');
+                                                         console.log('🗑️ All bills cancelled, clearing extras and localStorage caches');
                                                          setExtras([]);
                                                          setSelectedGroup(null);
+                                                         try {
+                                                            localStorage.removeItem('last_bill');
+                                                            localStorage.removeItem('extras_cache');
+                                                            localStorage.removeItem('bills_cache');
+                                                         } catch (err) {
+                                                            // ignore
+                                                         }
                                                       }
-                                                   } catch (err) {
-                                                      console.warn('⚠️ Error deleting bill:', err);
+
+                                                      alert('Đã hủy hóa đơn thành công');
+                                                   } catch (err: any) {
+                                                      console.error('⚠️ Error cancelling bill:', err);
+                                                      alert(err.message || 'Lỗi khi hủy hóa đơn. Vui lòng thử lại.');
                                                    }
                                                 }}
                                                 className="absolute top-2 right-2 p-2 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors z-10"
-                                                title="Xóa hóa đơn"
+                                                title="Hủy hóa đơn"
                                              >
                                                 <Trash2 className="w-5 h-5" />
                                              </button>
@@ -1111,7 +1203,7 @@ const FloatingBills = () => {
                                              {/* Dates and Pricing */}
                                              <div className="space-y-2 text-sm">
                                                 <p className="flex items-center justify-between">
-                                                   <span className="font-semibold text-gray-700">Ngày:</span>
+                                                   <span className="font-semibold text-gray-700">Ngày ở:</span>
                                                    <span className="text-gray-900 font-medium">
                                                       {formatDate(bill.checkIn || (bill as any).bookingDetails?.checkIn)} - {formatDate(bill.checkOut || (bill as any).bookingDetails?.checkOut)}
                                                    </span>
@@ -1156,6 +1248,26 @@ const FloatingBills = () => {
                                        <div className="border-t-2 border-[#2fd680] pt-4 mt-4">
                                           <h3 className="font-bold text-xl text-[#2fd680] mb-4">Thêm dịch vụ & ẩm thực</h3>
 
+                                          {/* Room Selection for Extras */}
+                                          {group.bills.length > 0 && (
+                                             <div className="mb-4 p-3 bg-white rounded-xl border-2 border-[#2fd680]">
+                                                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                                                   Chọn phòng để thêm dịch vụ/ẩm thực:
+                                                </label>
+                                                <select
+                                                   value={selectedBillForExtras || group.bills[0]?._id || group.bills[0]?.billNumber || ''}
+                                                   onChange={(e) => setSelectedBillForExtras(e.target.value)}
+                                                   className="w-full p-3 border-2 border-[#2fd680] rounded-lg bg-gradient-to-r from-teal-50 to-green-50 text-gray-800 font-medium focus:outline-none focus:ring-2 focus:ring-[#2fd680]"
+                                                >
+                                                   {group.bills.map((b) => (
+                                                      <option key={b._id || b.billNumber} value={b._id || b.billNumber}>
+                                                         {getBillDisplayLabel(b)}
+                                                      </option>
+                                                   ))}
+                                                </select>
+                                             </div>
+                                          )}
+
                                           {/* Services */}
                                           <div className="mb-6">
                                              <h4 className="font-semibold text-gray-700 mb-3 flex items-center gap-2">
@@ -1180,9 +1292,28 @@ const FloatingBills = () => {
                                                       </div>
                                                       <button
                                                          onClick={() => {
-                                                            window.dispatchEvent(new CustomEvent('selectService', {
-                                                               detail: { title: service.title, price: service.price, img: service.img }
-                                                            }));
+                                                            const targetBillId = selectedBillForExtras || group.bills[0]?._id || group.bills[0]?.billNumber || '';
+                                                            const priceValue = parseInt(service.price.replace(/[^\d]/g, '')) || 0;
+                                                            const newItem: ExtraItem = {
+                                                               id: `service-${Date.now()}-${Math.random()}`,
+                                                               type: 'service',
+                                                               title: service.title,
+                                                               price: priceValue,
+                                                               quantity: 1,
+                                                               image: service.img,
+                                                               billId: targetBillId,
+                                                            };
+                                                            setExtras(prev => {
+                                                               const existing = prev.find(item => item.title === service.title && item.type === 'service' && item.billId === targetBillId);
+                                                               if (existing) {
+                                                                  return prev.map(item =>
+                                                                     item.title === service.title && item.type === 'service' && item.billId === targetBillId
+                                                                        ? { ...item, quantity: item.quantity + 1 }
+                                                                        : item
+                                                                  );
+                                                               }
+                                                               return [...prev, newItem];
+                                                            });
                                                             try {
                                                                setRecentlyAdded(prev => ({ ...prev, [service.title]: true }));
                                                                setTimeout(() => setRecentlyAdded(prev => { const next = { ...prev }; delete next[service.title]; return next; }), 1800);
@@ -1233,9 +1364,28 @@ const FloatingBills = () => {
                                                       </div>
                                                       <button
                                                          onClick={() => {
-                                                            window.dispatchEvent(new CustomEvent('selectFood', {
-                                                               detail: { title: food.title, price: food.price, img: food.img }
-                                                            }));
+                                                            const targetBillId = selectedBillForExtras || group.bills[0]?._id || group.bills[0]?.billNumber || '';
+                                                            const priceValue = parseInt(food.price.replace(/[^\d]/g, '')) || 0;
+                                                            const newItem: ExtraItem = {
+                                                               id: `food-${Date.now()}-${Math.random()}`,
+                                                               type: 'food',
+                                                               title: food.title,
+                                                               price: priceValue,
+                                                               quantity: 1,
+                                                               image: food.img,
+                                                               billId: targetBillId,
+                                                            };
+                                                            setExtras(prev => {
+                                                               const existing = prev.find(item => item.title === food.title && item.type === 'food' && item.billId === targetBillId);
+                                                               if (existing) {
+                                                                  return prev.map(item =>
+                                                                     item.title === food.title && item.type === 'food' && item.billId === targetBillId
+                                                                        ? { ...item, quantity: item.quantity + 1 }
+                                                                        : item
+                                                                  );
+                                                               }
+                                                               return [...prev, newItem];
+                                                            });
                                                             try {
                                                                setRecentlyAdded(prev => ({ ...prev, [food.title]: true }));
                                                                setTimeout(() => setRecentlyAdded(prev => { const next = { ...prev }; delete next[food.title]; return next; }), 1800);
@@ -1498,6 +1648,12 @@ const FloatingBills = () => {
                                                       onClick={() => {
                                                          setSelectedGroup(group);
                                                          setActiveTab('payment');
+                                                         // Scroll to top of content when switching to payment tab
+                                                         setTimeout(() => {
+                                                            if (contentRef.current) {
+                                                               contentRef.current.scrollTop = 0;
+                                                            }
+                                                         }, 50);
                                                       }}
                                                       className="w-full bg-[#2fd680] text-white py-4 px-6 rounded-xl font-bold text-lg hover:bg-[#25a060] transition-all duration-300 shadow-lg hover:shadow-2xl transform hover:scale-[1.02] active:scale-[0.98]"
                                                    >
@@ -1519,8 +1675,7 @@ const FloatingBills = () => {
                         <div className="space-y-4">
                            {/* Payment Header */}
                            <div className="text-center mb-6">
-                              <h3 className="text-2xl font-bold text-gray-800 mb-2">Thanh toán</h3>
-                              <p className="text-gray-600">Quét mã QR hoặc chuyển khoản để hoàn tất</p>
+                              <p className="text-2xl font-bold text-gray-800 mb-2">Quét mã QR hoặc chuyển khoản để thanh toán</p>
                            </div>
 
                            {paymentMessage && (
@@ -1605,9 +1760,11 @@ const FloatingBills = () => {
                                                 <span className="font-semibold text-gray-700">Số tiền:</span>
                                                 <strong className="text-red-600 font-bold text-right">
                                                    {(() => {
-                                                      const billAmount = (selectedGroup?.bills?.[0]?.finalAmount) || (bills[0]?.finalAmount) || 0;
+                                                      // Calculate total from all bills in selectedGroup or all bills
+                                                      const billsToSum = selectedGroup?.bills || bills;
+                                                      const billsTotal = billsToSum.reduce((sum: number, b: any) => sum + (b.finalAmount || 0), 0);
                                                       const extrasTotal = extras.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-                                                      const totalAmount = billAmount + extrasTotal;
+                                                      const totalAmount = billsTotal + extrasTotal;
                                                       return totalAmount.toLocaleString('vi-VN');
                                                    })()} ₫
                                                 </strong>
@@ -1675,8 +1832,8 @@ const FloatingBills = () => {
                                                 <CheckCircle className="w-4 h-4 text-[#2fd680] flex-shrink-0 mt-0.5" />
                                                 <span><strong>Hủy trong ngày:</strong> <strong className="text-red-600">Không hoàn</strong></span>
                                              </p>
-                                             <p className="text-[#2fd680] font-medium mt-2 bg-yellow-50 px-2 py-1 rounded">
-                                                Xử lý: <strong>5-7 ngày làm việc</strong>
+                                             <p className="text-[#2fd680] font-medium mt-2 bg-yellow-50 px-2 py-1 rounded text-center">
+                                                Xử lý trong <strong> 2 - 3 </strong>  ngày làm việc
                                              </p>
                                           </div>
                                        </div>
@@ -1726,8 +1883,8 @@ const FloatingBills = () => {
                                                 <CheckCircle className="w-4 h-4 text-[#2fd680] flex-shrink-0 mt-0.5" />
                                                 <span>Zalo/Viber: <strong className="text-[#2fd680]">0901-234-567</strong></span>
                                              </p>
-                                             <p className="text-[#2fd680] font-medium mt-2 bg-blue-50 px-2 py-1 rounded text-center">
-                                                Phản hồi trong <strong>1-2 phút</strong>
+                                             <p className="text-[#2fd680] font-medium mt-2 bg-yellow-50 px-2 py-1 rounded text-center">
+                                                Phản hồi trong <strong> 1 - 2 </strong> phút
                                              </p>
                                           </div>
                                        </div>

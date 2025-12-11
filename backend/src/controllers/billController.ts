@@ -162,9 +162,12 @@ export const getUserBills = async (
     const allBills = await Bill.find({});
     console.log(`\n📊 Total bills in database: ${allBills.length}`);
 
-    // Now filter by user
+    // Now filter by user - only return active bills (exclude cancelled and refunded)
     console.log(`\n🔎 Searching for bills with user: ${userId}`);
-    const bills = await Bill.find({ user: userId })
+    const bills = await Bill.find({
+      user: userId,
+      status: { $nin: ["cancelled", "refunded"] }, // Exclude cancelled and refunded bills
+    })
       .populate("booking")
       .populate("roomInfo.roomId")
       .sort({ createdAt: -1 });
@@ -217,6 +220,42 @@ export const getBillByBooking = async (
     }
 
     res.json(successResponse(bill));
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const cancelBillByUser = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const userId = req.user._id;
+    const billId = req.params.id;
+
+    // Find bill and verify ownership
+    const bill = await Bill.findById(billId);
+
+    if (!bill) {
+      throw new AppError("Bill not found", 404);
+    }
+
+    // Check if bill belongs to user
+    if (String(bill.user) !== String(userId)) {
+      throw new AppError("You can only cancel your own bills", 403);
+    }
+
+    // Check if bill is already paid - set to refunded instead of cancelled
+    if (bill.paymentStatus === "paid") {
+      bill.status = "refunded";
+    } else {
+      bill.status = "cancelled";
+    }
+
+    await bill.save();
+
+    res.json(successResponse(bill, "Bill cancelled successfully"));
   } catch (error) {
     next(error);
   }

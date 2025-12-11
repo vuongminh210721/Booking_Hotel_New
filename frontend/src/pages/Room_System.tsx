@@ -13,11 +13,16 @@ export default function RoomSystem() {
 
   const [filteredRooms, setFilteredRooms] = useState(rooms);
   const [loading, setLoading] = useState(false);
-  const [filters, setFilters] = useState({
+  const [filters, setFilters] = useState<{
+    location: string;
+    checkIn: string;
+    checkOut: string;
+    guests: number | undefined;
+  }>({
     location: "",
     checkIn: "",
     checkOut: "",
-    guests: 2,
+    guests: undefined,
   });
 
   const handleSearch = (searchFilters: any) => {
@@ -32,7 +37,6 @@ export default function RoomSystem() {
           return false;
         }
 
-
         // Filter by guests - must match exactly if specified
         if (typeof searchFilters.guests !== "undefined" && searchFilters.guests !== null) {
           const roomGuests = parseInt(room.guests.split(" ")[0], 10) || 1;
@@ -42,14 +46,6 @@ export default function RoomSystem() {
         }
 
         // Room passes all filters
-
-        // If guests filter is provided, parse number of guests from room data and match exactly
-        if (typeof searchFilters.guests !== "undefined" && searchFilters.guests !== null) {
-          const roomGuests = parseInt(room.guests.split(" ")[0], 10) || 1;
-          return roomGuests === searchFilters.guests;
-        }
-
-        // No guests filter -> include the room
         return true;
       });
       setFilteredRooms(filtered);
@@ -86,7 +82,7 @@ export default function RoomSystem() {
     const qCheckIn = params.get("checkIn") || "";
     const qCheckOut = params.get("checkOut") || "";
     const qGuestsParam = params.get("guests");
-    const qGuests = qGuestsParam !== null ? parseInt(qGuestsParam, 10) : 2;
+    const qGuests = qGuestsParam !== null ? parseInt(qGuestsParam, 10) : undefined;
 
     if (qLocation || qCheckIn || qCheckOut) {
       const initial = {
@@ -150,7 +146,7 @@ export default function RoomSystem() {
         </div>
 
         {/* View All Rooms Button */}
-        {(filters.location || filters.checkIn || filters.checkOut || (filters.guests && filters.guests !== 2)) && (
+        {(filters.location || filters.checkIn || filters.checkOut || (typeof filters.guests !== "undefined" && filters.guests !== null)) && (
           <div className="mb-10 md:mb-12">
             <div className="bg-gradient-to-r from-teal-50 to-green-50 border border-teal-200 rounded-2xl p-6 md:p-8">
               <div className="flex flex-col md:flex-row items-center justify-between gap-4">
@@ -164,7 +160,7 @@ export default function RoomSystem() {
                 </div>
                 <button
                   onClick={() => {
-                    setFilters({ location: "", checkIn: "", checkOut: "", guests: 2 });
+                    setFilters({ location: "", checkIn: "", checkOut: "", guests: undefined });
                     setFilteredRooms(rooms);
                     navigate("/rooms");
                   }}
@@ -197,7 +193,7 @@ export default function RoomSystem() {
                 <div className="flex items-center justify-between flex-wrap gap-3">
                   <div className="text-base md:text-lg text-gray-700">
                     <p className="mb-1">
-                      {(filters.location || filters.checkIn || filters.checkOut || (filters.guests && filters.guests !== 2))
+                      {(filters.location || filters.checkIn || filters.checkOut || (typeof filters.guests !== "undefined" && filters.guests !== null))
                         ? <>Tìm thấy <span className="font-bold text-[#2fd680]">{filteredRooms.length}</span> phòng</>
                         : <>Có tất cả <span className="font-bold text-[#2fd680]">{filteredRooms.length}</span> phòng</>
                       }
@@ -213,7 +209,7 @@ export default function RoomSystem() {
                   </div>
                   <div className="flex items-center gap-2 text-sm text-gray-500">
                     <Info className="w-5 h-5" />
-                    <span>Giá đã bao gồm thuế phí</span>
+                    <span>Giá chưa bao gồm thuế</span>
                   </div>
                 </div>
               </div>
