@@ -48,21 +48,13 @@ export const createBill = async (
       },
       roomInfo: {
         roomId: booking.room ? (booking.room as any)._id : undefined,
-        roomName: booking.room
-          ? (booking.room as any).name
-          : booking.roomType || "Standard Room",
-        roomType: booking.room
-          ? (booking.room as any).type
-          : booking.roomType || "Standard",
+        roomName: booking.room ? (booking.room as any).name : "Standard Room",
+        roomType: booking.room ? (booking.room as any).type : "Standard",
         nightlyPrice: roomPrice,
       },
       bookingDetails: {
-        roomName: booking.room
-          ? (booking.room as any).name
-          : booking.roomType || "Standard Room",
-        roomType: booking.room
-          ? (booking.room as any).type
-          : booking.roomType || "Standard",
+        roomName: booking.room ? (booking.room as any).name : "Standard Room",
+        roomType: booking.room ? (booking.room as any).type : "Standard",
         nightlyPrice: roomPrice,
         nights,
         guests: booking.guests,
@@ -153,53 +145,18 @@ export const getUserBills = async (
 ) => {
   try {
     const userId = req.user._id;
-    console.log("\n\n🔍 ============= getUserBills START =============");
-    console.log("🔍 User ID from token:", userId);
-    console.log("🔍 User ID type:", typeof userId);
-    console.log("🔍 Full user object:", req.user);
 
-    // Try to find ALL bills first (for debugging)
-    const allBills = await Bill.find({});
-    console.log(`\n📊 Total bills in database: ${allBills.length}`);
-
-    // Now filter by user - only return active bills (exclude cancelled and refunded)
-    console.log(`\n🔎 Searching for bills with user: ${userId}`);
     const bills = await Bill.find({
       user: userId,
-      status: { $nin: ["cancelled", "refunded"] }, // Exclude cancelled and refunded bills
+      status: { $nin: ["cancelled", "refunded"] },
     })
       .populate("booking")
       .populate("roomInfo.roomId")
       .sort({ createdAt: -1 });
 
-    console.log(`\n✅ Found ${bills.length} bills for user ${userId}`);
-    if (bills.length > 0) {
-      bills.forEach((bill: any, index: number) => {
-        console.log(`\n  📋 Bill ${index + 1}:`, {
-          billId: bill._id,
-          user: bill.user,
-          userString: String(bill.user),
-          roomName: bill.bookingDetails?.roomName || bill.roomInfo?.roomName,
-          totalPrice: bill.totalPrice,
-          bookingId: bill.booking,
-        });
-      });
-    } else {
-      console.log("  ⚠️  No bills found for this user");
-      console.log(
-        "  💡 All bills in DB:",
-        allBills.map((b: any) => ({
-          billId: b._id,
-          billUser: b.user,
-          billUserString: String(b.user),
-        }))
-      );
-    }
-
-    console.log("\n🔍 ============= getUserBills END =============\n");
     res.json(successResponse(bills));
   } catch (error) {
-    console.error("❌ Error in getUserBills:", error);
+    console.error("Error in getUserBills:", error);
     next(error);
   }
 };
@@ -220,6 +177,105 @@ export const getBillByBooking = async (
     }
 
     res.json(successResponse(bill));
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const addExtraToBill = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const billId = req.params.id;
+    const { type, title, price, quantity = 1, image } = req.body;
+
+    const bill = await Bill.findById(billId);
+    if (!bill) throw new AppError("Bill not found", 404);
+
+    // Only owner or admin may modify extras
+    const userId = req.user._id;
+    if (String(bill.user) !== String(userId)) {
+      throw new AppError("Forbidden", 403);
+    }
+
+    const extraItem: any = {
+      type,
+      title,
+      price: Number(price) || 0,
+      quantity: Number(quantity) || 1,
+      image,
+    };
+
+    bill.extras = bill.extras || [];
+    bill.extras.push(extraItem as any);
+
+    // Update totals
+    const added = Number(extraItem.price) * Number(extraItem.quantity);
+    bill.totalPrice = (bill.totalPrice || 0) + added;
+    bill.tax = Number((bill.totalPrice * 0.08).toFixed(2));
+    bill.finalAmount = (bill.totalPrice || 0) + (bill.tax || 0);
+
+    await bill.save();
+
+    const populated = await Bill.findById(bill._id)
+      .populate("booking")
+      .populate("user", "fullName email")
+      .populate("roomInfo.roomId");
+
+    res.json(successResponse(populated, "Extra added to bill"));
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const removeExtraFromBill = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const billId = req.params.id;
+    const extraId = req.params.extraId;
+
+    const bill = await Bill.findById(billId);
+    if (!bill) throw new AppError("Bill not found", 404);
+
+    const userId = req.user._id;
+    if (String(bill.user) !== String(userId)) {
+      throw new AppError("Forbidden", 403);
+    }
+
+    const extra = (bill.extras || []).find(
+      (e: any) =>
+        String((e as any)._id) === String(extraId) ||
+        String(e.id) === String(extraId)
+    );
+    if (!extra) throw new AppError("Extra item not found", 404);
+
+    const deduction = Number(extra.price) * Number(extra.quantity || 1);
+
+    // Remove the extra
+    bill.extras = (bill.extras || []).filter((e: any) => {
+      return !(
+        String((e as any)._id) === String(extraId) ||
+        String(e.id) === String(extraId)
+      );
+    });
+
+    bill.totalPrice = Math.max(0, (bill.totalPrice || 0) - deduction);
+    bill.tax = Number((bill.totalPrice * 0.08).toFixed(2));
+    bill.finalAmount = (bill.totalPrice || 0) + (bill.tax || 0);
+
+    await bill.save();
+
+    const populated = await Bill.findById(bill._id)
+      .populate("booking")
+      .populate("user", "fullName email")
+      .populate("roomInfo.roomId");
+
+    res.json(successResponse(populated, "Extra removed from bill"));
   } catch (error) {
     next(error);
   }

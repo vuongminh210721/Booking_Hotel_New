@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { UI_Carousel } from "@/components/Carousel";
 import { rooms as roomData } from "@/data/room";
 import { useScrollToTop } from "@/hooks/use-scroll-to-top";
+import { reviewService, type Review } from "@/services/reviewService";
 
 export default function Index() {
   useScrollToTop();
@@ -13,6 +14,7 @@ export default function Index() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const btnRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const [sliderDims, setSliderDims] = useState<{ width: number; left: number }>({ width: 0, left: 0 });
+  const [reviews, setReviews] = useState<Review[]>([]);
 
   useEffect(() => {
     const openHandler = () => setShowBooking(true);
@@ -24,6 +26,20 @@ export default function Index() {
     const closeHandler = () => setShowBooking(false);
     window.addEventListener("closeBooking", closeHandler);
     return () => window.removeEventListener("closeBooking", closeHandler);
+  }, []);
+
+  useEffect(() => {
+    const fetchReviews = async () => {
+      try {
+        const allReviews = await reviewService.getAllReviews();
+        // Randomly select 6 reviews
+        const shuffled = [...allReviews].sort(() => Math.random() - 0.5);
+        setReviews(shuffled.slice(0, 6));
+      } catch (error) {
+        console.error("Failed to fetch reviews:", error);
+      }
+    };
+    fetchReviews();
   }, []);
 
   useEffect(() => {
@@ -296,96 +312,78 @@ export default function Index() {
       {/* Customer Reviews Section */}
       <section className="py-20 md:py-24 lg:py-28 px-4 md:px-8 lg:px-12 bg-gradient-to-b from-white to-teal-50">
         <div className="max-w-[1300px] mx-auto">
-          {/** Reviews data with optional avatar images (replace URLs with your files later) */}
-          {(() => {
-            /* Define reviews inline to keep component self-contained */
-            const reviews = [
-              {
-                name: "Alex Nguyễn",
-                city: "Tp Hồ Chí Minh",
-                text:
-                  '"Phòng rất sạch sẽ, hiện đại và tiện nghi. Nhân viên thân thiện, nhiệt tình. Vị trí thuận lợi, gần trung tâm. Tôi rất hài lòng với trải nghiệm lưu trú tại đây!"',
-                avatarUrl: `https://i.pravatar.cc/96?u=${encodeURIComponent("Minh Anh Nguyen")}`,
-              },
-              {
-                name: "Cao Thu Hoài",
-                city: "Hà Nội",
-                text:
-                  '"Đồ ăn sáng rất ngon và đa dạng. Phòng có view đẹp, giường ngủ thoải mái. Dịch vụ room service nhanh chóng. Chắc chắn sẽ quay lại lần sau!"',
-                avatarUrl: `https://i.pravatar.cc/96?u=${encodeURIComponent("Hoang Tuan Le")}`,
-              },
-              {
-                name: "Lê Minh Quang",
-                city: "Đà Nẵng",
-                text:
-                  '"Khách sạn view biển tuyệt đẹp! Nhà hàng phục vụ hải sản tươi ngon. Spa và bể bơi rất tiện lợi. Kỳ nghỉ của gia đình tôi thật tuyệt vời. Cảm ơn HotelHub!"',
-                avatarUrl: `https://i.pravatar.cc/96?u=${encodeURIComponent("Thu Ha Tran")}`,
-              },
-              {
-                name: "Phạm Ngọc Hà",
-                city: "Hà Nội",
-                text:
-                  '"Công tác xa nhà nhưng cảm thấy rất thoải mái như ở nhà. Phòng có đầy đủ tiện nghi làm việc. WiFi nhanh, yên tĩnh. Giá cả hợp lý. Đáng để giới thiệu!"',
-                avatarUrl: `https://i.pravatar.cc/96?u=${encodeURIComponent("Duy Khanh Pham")}`,
-              },
-              {
-                name: "Trần Hà Thu",
-                city: "Tp Hồ Chí Minh",
-                text:
-                  '"Buffet sáng rất phong phú với nhiều món Á - Âu. Bar rooftop view đẹp, cocktail ngon. Phòng gym hiện đại. Trải nghiệm 5 sao với mức giá hợp lý!"',
-                avatarUrl: `https://i.pravatar.cc/96?u=${encodeURIComponent("Linh Chi Vo")}`,
-              },
-              {
-                name: "Đỗ Quang Minh",
-                city: "Đà Nẵng",
-                text:
-                  '"Dịch vụ chăm sóc khách hàng tuyệt vời! Checkin nhanh chóng, checkout linh hoạt. Phòng ban công có view biển tuyệt đẹp. Cảm ơn team HotelHub đã tạo ra kỳ nghỉ đáng nhớ!"',
-                avatarUrl: `https://i.pravatar.cc/96?u=${encodeURIComponent("Quang Minh Do")}`,
-              },
-            ];
-            return (
-              <>
-                <div className="text-center mb-16 md:mb-20">
-                  <h2 className="text-4xl md:text-5xl lg:text-6xl font-bold text-gray-900 mb-4 tracking-tight">
-                    Khách hàng nói gì về chúng tôi
-                  </h2>
-                  <p className="text-base md:text-lg text-gray-600 max-w-2xl mx-auto">
-                    Hàng nghìn khách hàng đã tin tưởng và trải nghiệm dịch vụ của HotelHub
-                  </p>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 md:gap-10">
-                  {reviews.map((review, i) => (
-                    <div
-                      key={i}
-                      className="bg-white rounded-2xl p-8 shadow-lg hover:shadow-xl transition-all duration-300 transform hover:-translate-y-2 border border-gray-100"
-                    >
-                      <div className="flex items-center gap-1 mb-4">
-                        {[...Array(5)].map((_, star) => (
-                          <svg key={star} className="w-5 h-5 text-yellow-400 fill-current" viewBox="0 0 20 20">
-                            <path d="M10 15l-5.878 3.09 1.123-6.545L.489 6.91l6.572-.955L10 0l2.939 5.955 6.572.955-4.756 4.635 1.123 6.545z" />
-                          </svg>
-                        ))}
-                      </div>
-                      <p className="text-gray-700 leading-relaxed mb-6 italic">{review.text}</p>
-                      <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 rounded-full overflow-hidden bg-gradient-to-br from-teal-400 to-green-400 flex items-center justify-center text-white font-bold text-lg">
-                          {review.avatarUrl ? (
-                            <img src={review.avatarUrl} alt={review.name} className="w-full h-full object-cover" />
-                          ) : (
-                            (review.name?.[0] || "?").toUpperCase()
-                          )}
-                        </div>
-                        <div>
-                          <h4 className="font-semibold text-gray-900">{review.name}</h4>
-                          <p className="text-sm text-gray-500">{review.city}</p>
-                        </div>
-                      </div>
+          <div className="text-center mb-16 md:mb-20">
+            <h2 className="text-4xl md:text-5xl lg:text-6xl font-bold text-gray-900 mb-4 tracking-tight">
+              Khách hàng nói gì về chúng tôi
+            </h2>
+            <p className="text-base md:text-lg text-gray-600 max-w-2xl mx-auto">
+              Rất nhiều khách hàng đã tin tưởng và trải nghiệm dịch vụ của HotelHub
+            </p>
+          </div>
+
+          {reviews.length === 0 ? (
+            <div className="text-center py-12 text-gray-500">
+              Chưa có đánh giá nào
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 md:gap-10">
+              {reviews.map((review) => (
+                <div
+                  key={review._id}
+                  className="bg-white rounded-2xl p-8 shadow-lg hover:shadow-xl transition-all duration-300 transform hover:-translate-y-2 border border-gray-100"
+                >
+                  {/* Avatar and user info at top */}
+                  <div className="flex items-start gap-4 mb-6">
+                    <div className="w-14 h-14 rounded-full overflow-hidden bg-gradient-to-br from-teal-400 to-green-400 flex items-center justify-center text-white font-bold text-xl flex-shrink-0">
+                      {review.user?.avatarUrl ? (
+                        <img
+                          src={`http://localhost:5000${review.user.avatarUrl}`}
+                          alt={review.user.fullName || "User"}
+                          className="w-full h-full object-cover"
+                          onError={(e) => {
+                            e.currentTarget.style.display = "none";
+                          }}
+                        />
+                      ) : (
+                        (review.user?.fullName?.[0] || "?").toUpperCase()
+                      )}
                     </div>
-                  ))}
+                    <div className="flex-1 min-w-0">
+                      <h4 className="font-bold text-gray-900 text-lg leading-tight">{review.user?.fullName || "Ẩn danh"}</h4>
+                      <p className="text-sm text-gray-500 flex items-center gap-1.5 mt-1.5">
+                        <svg className="w-3.5 h-3.5 text-teal-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" />
+                        </svg>
+                        <span className="truncate">{review.location}</span>
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Room name */}
+                  <div className="mb-4">
+                    <h5 className="text-base font-semibold text-teal-600 truncate">{review.hotelName}</h5>
+                  </div>
+
+                  {/* Comment in middle */}
+                  <p className="text-gray-700 leading-relaxed mb-6 italic text-base line-clamp-4">"{review.comment}"</p>
+
+                  {/* Star rating at bottom */}
+                  <div className="flex items-center gap-1 pt-4 border-t border-gray-100">
+                    {[...Array(5)].map((_, star) => (
+                      <svg
+                        key={star}
+                        className={`w-5 h-5 ${star < review.rating ? "text-yellow-400" : "text-gray-300"
+                          } fill-current`}
+                        viewBox="0 0 20 20"
+                      >
+                        <path d="M10 15l-5.878 3.09 1.123-6.545L.489 6.91l6.572-.955L10 0l2.939 5.955 6.572.955-4.756 4.635 1.123 6.545z" />
+                      </svg>
+                    ))}
+                  </div>
                 </div>
-              </>
-            );
-          })()}
+              ))}
+            </div>
+          )}
         </div>
       </section>
 

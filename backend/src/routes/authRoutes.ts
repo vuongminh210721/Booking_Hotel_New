@@ -19,7 +19,7 @@ router.post(
   "/upload-avatar",
   authMiddleware,
   uploadAvatar,
-  uploadAvatarController,
+  uploadAvatarController
 );
 
 export default router;

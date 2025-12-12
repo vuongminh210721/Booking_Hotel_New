@@ -81,7 +81,7 @@ const UserMenu: React.FC = () => {
             <DropdownMenuItem asChild>
                <Link to="/my-reviews" className="cursor-pointer">
                   <Star className="mr-2 h-4 w-4" />
-                  <span>Đánh giá của tôi</span>
+                  <span>Đánh giá về HotelHub</span>
                </Link>
             </DropdownMenuItem>
             <DropdownMenuSeparator />

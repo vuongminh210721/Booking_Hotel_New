@@ -11,7 +11,7 @@ export interface Bill {
   roomInfo: {
     roomId?: string;
     roomName: string;
-    roomType: string;
+    // roomType: string;
     nightlyPrice: number;
   };
   checkIn: string;
@@ -84,6 +84,47 @@ export const billService = {
       throw new Error("Failed to create bill");
     }
 
+    const data = await response.json();
+    return data.data;
+  },
+  async addExtra(
+    billId: string,
+    extra: {
+      type: string;
+      title: string;
+      price: number;
+      quantity?: number;
+      image?: string;
+    }
+  ) {
+    const token =
+      localStorage.getItem("token") || localStorage.getItem("auth_token");
+    const response = await fetch(`${API_BASE_URL}/bills/${billId}/extras`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(extra),
+    });
+    if (!response.ok) throw new Error("Failed to add extra to bill");
+    const data = await response.json();
+    return data.data;
+  },
+
+  async removeExtra(billId: string, extraId: string) {
+    const token =
+      localStorage.getItem("token") || localStorage.getItem("auth_token");
+    const response = await fetch(
+      `${API_BASE_URL}/bills/${billId}/extras/${extraId}`,
+      {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    );
+    if (!response.ok) throw new Error("Failed to remove extra from bill");
     const data = await response.json();
     return data.data;
   },

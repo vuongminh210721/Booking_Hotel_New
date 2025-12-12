@@ -50,14 +50,14 @@ export const authService = {
   clearAuth() {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
-    // Clear bill-related caches on logout to prevent data from previous session
+    // Clear bill-related caches on logout to prevent data from previous session,
+    // but keep extras_cache so services/food persist across login/logout per user request
     localStorage.removeItem("bills_cache");
     localStorage.removeItem("last_bill");
-    localStorage.removeItem("extras_cache");
-    localStorage.removeItem("deleted_bills");
+    // Keep extras_cache by NOT removing it here
+    // localStorage.removeItem("extras_cache");
   },
 
-  // Check if logged in
   isAuthenticated(): boolean {
     return !!this.getToken();
   },

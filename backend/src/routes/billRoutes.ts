@@ -10,6 +10,8 @@ import {
   getBillStatus,
   userConfirmPayment,
   cancelBillByUser,
+  addExtraToBill,
+  removeExtraFromBill,
 } from "../controllers/billController";
 import { authMiddleware, adminMiddleware } from "../middlewares/authMiddleware";
 
@@ -43,6 +45,9 @@ router.delete(
   authMiddleware,
   cancelBillByUser
 );
+// Extras endpoints for adding/removing services/food to a bill (user must own bill)
+router.post("/:id/extras", authMiddleware, addExtraToBill);
+router.delete("/:id/extras/:extraId", authMiddleware, removeExtraFromBill);
 router.post("/", createBill);
 
 // Admin routes - generic :id route LAST

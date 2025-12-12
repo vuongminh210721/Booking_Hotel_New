@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
-import { config } from "../config/env";
+import { config } from "../utils/env";
 import User from "../models/User";
 
 export interface AuthRequest extends Request {
@@ -10,7 +10,7 @@ export interface AuthRequest extends Request {
 export const authMiddleware = async (
   req: AuthRequest,
   res: Response,
-  next: NextFunction,
+  next: NextFunction
 ) => {
   try {
     const token = req.headers.authorization?.replace("Bearer ", "");
@@ -45,7 +45,7 @@ export const authMiddleware = async (
 export const adminMiddleware = async (
   req: AuthRequest,
   res: Response,
-  next: NextFunction,
+  next: NextFunction
 ) => {
   if (req.user?.role !== "admin") {
     return res.status(403).json({

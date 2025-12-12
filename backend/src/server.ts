@@ -1,13 +1,17 @@
 import app from "./app";
-import { config } from "./config/env";
-import connectDB from "./config/db";
+import { config } from "./utils/env";
+import connectDB from "./utils/db";
+
+process.on("unhandledRejection", (reason) => {
+  console.error("Unhandled Rejection:", reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("Uncaught Exception:", err);
+});
 
 const startServer = async () => {
   try {
-    // Connect to MongoDB
     await connectDB();
-
-    // Start server
     app.listen(config.port, () => {
       console.log(`🚀 Server running on port ${config.port}`);
       console.log(`📍 Environment: ${config.nodeEnv}`);

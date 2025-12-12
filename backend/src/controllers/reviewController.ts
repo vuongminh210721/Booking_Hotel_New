@@ -1,198 +1,142 @@
-import { Request, Response, NextFunction } from "express";
-import Review from "../models/Review";
-import Room from "../models/Room";
-import {
-  successResponse,
-  paginationResponse,
-} from "../utils/responseFormatter";
-import { AppError } from "../middlewares/errorMiddleware";
+import { Request, Response } from "express";
 import { AuthRequest } from "../middlewares/authMiddleware";
+import Review from "../models/Review";
+import { successResponse, errorResponse } from "../utils/responseFormatter";
 
-export const getAllReviews = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => {
+export const createReview = async (req: AuthRequest, res: Response) => {
   try {
-    const { room, rating, limit = 20, page = 1 } = req.query;
-    const filter: any = {};
-    if (room) filter.room = room;
-    if (rating) filter.rating = Number(rating);
-
-    const skip = (Number(page) - 1) * Number(limit);
-    const reviews = await Review.find(filter)
-      .populate("room", "name type location")
-      .populate("user", "fullName email")
-      .sort({ createdAt: -1 })
-      .limit(Number(limit))
-      .skip(skip);
-
-    const total = await Review.countDocuments(filter);
-    res.json(paginationResponse(reviews, Number(page), Number(limit), total));
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const getReviewById = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => {
-  try {
-    const review = await Review.findById(req.params.id)
-      .populate("room", "name type location")
-      .populate("user", "fullName email");
-    if (!review) {
-      throw new AppError("Review not found", 404);
-    }
-    res.json(successResponse(review));
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const createReview = async (
-  req: AuthRequest,
-  res: Response,
-  next: NextFunction
-) => {
-  try {
-    const { roomId, rating, comment, images } = req.body;
-    const room = await Room.findById(roomId);
-    if (!room) {
-      throw new AppError("Room not found", 404);
+    const userId = req.user?._id;
+    if (!userId) {
+      return res.status(401).json(errorResponse("Unauthorized"));
     }
 
-    const existingReview = await Review.findOne({
-      room: roomId,
-      user: req.user._id,
-    });
-    if (existingReview) {
-      throw new AppError("You have already reviewed this room", 400);
+    const { hotelName, location, rating, comment } = req.body;
+
+    if (!hotelName || !location || !rating || !comment) {
+      return res
+        .status(400)
+        .json(
+          errorResponse("hotelName, location, rating, comment are required")
+        );
+    }
+
+    if (rating < 1 || rating > 5) {
+      return res.status(400).json(errorResponse("rating must be 1-5"));
     }
 
     const review = await Review.create({
-      room: roomId,
-      user: req.user._id,
+      user: userId,
+      hotelName,
+      location,
       rating,
       comment,
-      images: images || [],
     });
 
-    const populatedReview = await Review.findById(review._id)
-      .populate("room", "name type location")
-      .populate("user", "fullName email");
+    const populated = await review.populate({
+      path: "user",
+      select: "fullName avatarUrl",
+    });
 
-    res
-      .status(201)
-      .json(successResponse(populatedReview, "Review created successfully"));
-  } catch (error) {
-    next(error);
+    return res.status(201).json(successResponse(populated, "Review created"));
+  } catch (error: any) {
+    return res
+      .status(500)
+      .json(errorResponse(error?.message || "Failed to create review"));
   }
 };
 
-export const updateReview = async (
-  req: AuthRequest,
-  res: Response,
-  next: NextFunction
-) => {
+export const getMyReviews = async (req: AuthRequest, res: Response) => {
   try {
-    const review = await Review.findById(req.params.id);
+    const userId = req.user?._id;
+    if (!userId) {
+      return res.status(401).json(errorResponse("Unauthorized"));
+    }
+
+    const reviews = await Review.find({ user: userId })
+      .populate({ path: "user", select: "fullName avatarUrl" })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    return res.json(successResponse(reviews));
+  } catch (error: any) {
+    return res
+      .status(500)
+      .json(errorResponse(error?.message || "Failed to fetch reviews"));
+  }
+};
+
+export const getAllReviews = async (req: Request, res: Response) => {
+  try {
+    const reviews = await Review.find({})
+      .populate({ path: "user", select: "fullName avatarUrl" })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    return res.json(successResponse(reviews));
+  } catch (error: any) {
+    return res
+      .status(500)
+      .json(errorResponse(error?.message || "Failed to fetch reviews"));
+  }
+};
+
+export const updateReview = async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.user?._id;
+    if (!userId) {
+      return res.status(401).json(errorResponse("Unauthorized"));
+    }
+
+    const { id } = req.params;
+    const { hotelName, location, rating, comment } = req.body;
+
+    if (rating !== undefined && (rating < 1 || rating > 5)) {
+      return res.status(400).json(errorResponse("rating must be 1-5"));
+    }
+
+    const updatePayload: any = {};
+    if (hotelName !== undefined) updatePayload.hotelName = hotelName;
+    if (location !== undefined) updatePayload.location = location;
+    if (rating !== undefined) updatePayload.rating = rating;
+    if (comment !== undefined) updatePayload.comment = comment;
+
+    const review = await Review.findOneAndUpdate(
+      { _id: id, user: userId },
+      { $set: updatePayload },
+      { new: true, runValidators: true }
+    ).populate({ path: "user", select: "fullName avatarUrl" });
+
     if (!review) {
-      throw new AppError("Review not found", 404);
+      return res.status(404).json(errorResponse("Review not found"));
     }
 
-    if (review.user.toString() !== req.user._id.toString()) {
-      throw new AppError("You can only update your own reviews", 403);
-    }
-
-    const { rating, comment, images } = req.body;
-    review.rating = rating || review.rating;
-    review.comment = comment || review.comment;
-    review.images = images || review.images;
-    await review.save();
-
-    const populatedReview = await Review.findById(review._id)
-      .populate("room", "name type location")
-      .populate("user", "fullName email");
-
-    res.json(successResponse(populatedReview, "Review updated successfully"));
-  } catch (error) {
-    next(error);
+    return res.json(successResponse(review, "Review updated"));
+  } catch (error: any) {
+    return res
+      .status(500)
+      .json(errorResponse(error?.message || "Failed to update review"));
   }
 };
 
-export const deleteReview = async (
-  req: AuthRequest,
-  res: Response,
-  next: NextFunction
-) => {
+export const deleteReview = async (req: AuthRequest, res: Response) => {
   try {
-    const review = await Review.findById(req.params.id);
+    const userId = req.user?._id;
+    if (!userId) {
+      return res.status(401).json(errorResponse("Unauthorized"));
+    }
+
+    const { id } = req.params;
+
+    const review = await Review.findOneAndDelete({ _id: id, user: userId });
+
     if (!review) {
-      throw new AppError("Review not found", 404);
+      return res.status(404).json(errorResponse("Review not found"));
     }
 
-    if (review.user.toString() !== req.user._id.toString()) {
-      throw new AppError("You can only delete your own reviews", 403);
-    }
-
-    await review.deleteOne();
-    res.json(successResponse(null, "Review deleted successfully"));
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const markHelpful = async (
-  req: AuthRequest,
-  res: Response,
-  next: NextFunction
-) => {
-  try {
-    const review = await Review.findById(req.params.id);
-    if (!review) {
-      throw new AppError("Review not found", 404);
-    }
-
-    review.helpfulCount = (review.helpfulCount || 0) + 1;
-    await review.save();
-
-    res.json(successResponse(review, "Marked as helpful"));
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const getUserReviews = async (
-  req: AuthRequest,
-  res: Response,
-  next: NextFunction
-) => {
-  try {
-    const reviews = await Review.find({ user: req.user._id })
-      .populate("room", "name type location images")
-      .sort({ createdAt: -1 });
-
-    res.json(successResponse(reviews));
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const getRoomReviews = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => {
-  try {
-    const reviews = await Review.find({ room: req.params.roomId })
-      .populate("user", "fullName")
-      .sort({ createdAt: -1 });
-
-    res.json(successResponse(reviews));
-  } catch (error) {
-    next(error);
+    return res.json(successResponse(null, "Review deleted"));
+  } catch (error: any) {
+    return res
+      .status(500)
+      .json(errorResponse(error?.message || "Failed to delete review"));
   }
 };

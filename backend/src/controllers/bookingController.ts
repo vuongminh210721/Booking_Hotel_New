@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from "express";
 import Booking from "../models/Booking";
 import Room from "../models/Room";
-import Policy from "../models/Policy";
+// import Policy from "../models/Policy";
 import Bill from "../models/Bill";
 import {
   successResponse,
@@ -35,18 +35,13 @@ export const createBooking = async (
     let room = null;
     let roomPrice = 0;
 
-    // Validate roomId to avoid CastError: invalid ObjectId
     const isValidRoomId =
       roomId && typeof roomId === "string" && roomId.trim().length > 0;
 
     if (isValidRoomId) {
       room = await Room.findById(roomId).catch(() => null);
       if (!room) {
-        // Fallback: allow booking by roomType + customRoomPrice if provided
-        if (roomType && customRoomPrice) {
-          console.warn(
-            "Room not found by roomId, falling back to roomType + custom price"
-          );
+        if (roomName && customRoomPrice) {
           room = null;
           roomPrice = parseFloat(customRoomPrice);
         } else {
@@ -58,7 +53,7 @@ export const createBooking = async (
         }
         roomPrice = room.discountPrice || room.price;
       }
-    } else if (roomType && customRoomPrice) {
+    } else if (roomName && customRoomPrice) {
       roomPrice = parseFloat(customRoomPrice);
     } else {
       throw new AppError("Room information is required", 400);
@@ -76,15 +71,7 @@ export const createBooking = async (
 
     const totalPrice = roomPrice * nights;
 
-    const policies = await Policy.find({ isActive: true }).select(
-      "title type content"
-    );
-
-    // Get user ID from authenticated request
-    const userId = (req as any).user?._id;
-
     const bookingPayload: any = {
-      user: userId, // Add user to booking
       roomName: roomName || roomType,
       fullName,
       email,
@@ -165,13 +152,13 @@ export const createBooking = async (
         roomPrice: roomPrice.toLocaleString("vi-VN"),
         totalPrice: totalPrice.toLocaleString("vi-VN"),
         specialRequests,
-        policies,
+        // policies,
       };
 
       await sendBookingConfirmation(email, emailPayloadBase);
       await sendBookingConfirmation("trongluffy22@gmail.com", emailPayloadBase);
     } catch (emailError) {
-      console.error("Failed to send confirmation email:", emailError);
+      console.error("Error sending confirmation email:", emailError);
     }
 
     // Auto create bill after booking and return it together with booking
@@ -181,27 +168,7 @@ export const createBooking = async (
       const finalAmount = totalPrice + tax;
       const userId = (req as any).user?._id;
 
-      console.log("\n\n💳 ============= Creating Bill START =============");
-      console.log("💳 User ID:", userId);
-      console.log("💳 User ID type:", typeof userId);
-      console.log("💳 Full Req.user object:", (req as any).user);
-      console.log("💳 Booking ID:", booking._id);
-      console.log("💳 Room details:", {
-        roomName: room?.name || roomName,
-        roomType,
-        nightlyPrice: roomPrice,
-        nights,
-      });
-      console.log("💳 Pricing:", { totalPrice, tax, finalAmount });
-
-      // Generate billNumber
-      const timestamp = Date.now().toString().slice(-6);
-      const bookingIdLast6 = booking._id.toString().slice(-6);
-      const billNumber = `HD-${new Date().getFullYear()}-${timestamp}-${bookingIdLast6}`;
-      console.log("💳 Generated billNumber:", billNumber);
-
       const bill = await Bill.create({
-        billNumber: billNumber,
         booking: booking._id,
         user: userId,
         customerInfo: {
@@ -245,29 +212,28 @@ export const createBooking = async (
         .populate("booking")
         .populate("user", "fullName email")
         .populate("roomInfo.roomId");
-
-      console.log("✅ Bill created successfully:", {
-        billId: createdBill?._id,
-        billNumber: createdBill?.billNumber,
-        userId: createdBill?.user,
-        userIdString: String(createdBill?.user),
-        roomName: createdBill?.bookingDetails?.roomName,
-        totalPrice: createdBill?.totalPrice,
-      });
-      console.log("💳 ============= Creating Bill END =============\n");
     } catch (billError) {
-      console.error("❌ Failed to create bill:", billError);
-      console.log("💳 ============= Creating Bill END (ERROR) =============\n");
+      console.error("Failed to create bill:", billError);
     }
 
-    res
-      .status(201)
-      .json(
-        successResponse(
-          { booking: populatedBooking, bill: createdBill },
-          "Booking and bill created successfully"
-        )
-      );
+    try {
+      res
+        .status(201)
+        .json(
+          successResponse(
+            { booking: populatedBooking, bill: createdBill },
+            "Booking and bill created successfully"
+          )
+        );
+    } catch (responseError) {
+      console.error("❌ Error sending response:", responseError);
+      if (!res.headersSent) {
+        res.status(500).json({
+          success: false,
+          message: "Error sending response",
+        });
+      }
+    }
   } catch (error) {
     next(error);
   }

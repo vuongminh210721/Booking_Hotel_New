@@ -7,19 +7,11 @@ import { X, User, Mail, Phone, Calendar, Users, Hotel, CheckCircle, Sparkles } f
 // API URL từ environment
 const API_BASE_URL = import.meta.env.VITE_API_URL || "/api";
 
-// Định nghĩa loại phòng với giá tiền
-const ROOM_TYPES = {
-   "Phòng cơ bản": { price: 1000000, description: "Phòng tiêu chuẩn với tiện nghi cơ bản" },
-   "Phòng trung cấp": { price: 1800000, description: "Phòng rộng rãi với tiện nghi đầy đủ" },
-   "Phòng cao cấp": { price: 3500000, description: "Phòng sang trọng với view đẹp và tiện nghi 5 sao" },
-};
-
 export default function Booking_Home() {
    const [showBooking, setShowBooking] = useState(false);
    const [fullName, setFullName] = useState("");
    const [email, setEmail] = useState("");
    const [phone, setPhone] = useState("");
-   const [roomType, setRoomType] = useState<keyof typeof ROOM_TYPES>("Phòng cơ bản");
    const [roomName, setRoomName] = useState<string>(""); // Actual room name selected (e.g., "EXECUTIVE PLUS")
    const [roomPrice, setRoomPrice] = useState<string>("");
    const [roomId, setRoomId] = useState<string>("");
@@ -55,7 +47,7 @@ export default function Booking_Home() {
          // Save intended booking details so we can resume after login
          const intent = {
             roomId: detail.roomId ? String(detail.roomId) : "",
-            roomName: String(detail.roomName || roomType),
+            roomName: String(detail.roomName || ""),
             price: String(detail.price || roomPrice || ""),
             guests: guestsNumber,
             checkIn: String(detail.checkIn || checkIn),
@@ -85,14 +77,6 @@ export default function Booking_Home() {
          // Prefill booking info from intent
          if (intent.roomName) {
             setRoomName(intent.roomName);
-            // Check if roomName matches a key in ROOM_TYPES
-            if (intent.roomName in ROOM_TYPES) {
-               setRoomType(intent.roomName as keyof typeof ROOM_TYPES);
-               // If no price provided, use the default price from ROOM_TYPES
-               if (!intent.price) {
-                  setRoomPrice(""); // Empty means use ROOM_TYPES price
-               }
-            }
          }
          if (intent.roomId) setRoomId(intent.roomId);
          if (intent.price) setRoomPrice(intent.price);
@@ -115,7 +99,7 @@ export default function Booking_Home() {
          console.log("📡 Removing openBooking event listener");
          window.removeEventListener("openBooking", handleOpenBooking as EventListener);
       };
-   }, [isAuthenticated, navigate, roomType, roomPrice, guests, checkIn, checkOut, user]);
+   }, [isAuthenticated, navigate, roomPrice, guests, checkIn, checkOut, user]);
 
    // After login: if there is a pending booking intent, resume and prefill user info
    useEffect(() => {
@@ -134,10 +118,6 @@ export default function Booking_Home() {
                if (raw) {
                   console.log("📦 Found pending booking in backup check:", raw);
                   const intent = JSON.parse(raw);
-                  // Validate and set room type
-                  if (intent.roomName && intent.roomName in ROOM_TYPES) {
-                     setRoomType(String(intent.roomName) as keyof typeof ROOM_TYPES);
-                  }
                   if (intent.roomName) setRoomName(String(intent.roomName));
                   if (intent.price) setRoomPrice(String(intent.price));
                   if (intent.guests) {
@@ -165,7 +145,6 @@ export default function Booking_Home() {
       setFullName("");
       setEmail("");
       setPhone("");
-      setRoomType("Phòng cơ bản");
       setRoomName("");
       setRoomPrice("");
       setRoomId("");
@@ -183,9 +162,6 @@ export default function Booking_Home() {
       if (roomPrice) {
          // Nếu có giá từ phòng cụ thể
          price = parseFloat(roomPrice.replace(/\./g, ""));
-      } else if (ROOM_TYPES[roomType]) {
-         // Nếu chọn loại phòng chuẩn
-         price = ROOM_TYPES[roomType].price;
       }
 
       // Tính số đêm
@@ -236,7 +212,7 @@ export default function Booking_Home() {
          try {
             const pending = {
                roomId,
-               roomName: roomName || roomType,
+               roomName: roomName || "",
                guests,
                checkIn,
                checkOut,
@@ -287,14 +263,13 @@ export default function Booking_Home() {
          // Lấy giá phòng
          const pricePerNight = roomPrice
             ? parseFloat(roomPrice.replace(/\./g, ""))
-            : (ROOM_TYPES[roomType]?.price || 0);
+            : 0;
 
          // Gọi API để lưu booking
          console.log("\n\n📤 ============= Booking Request Sent =============");
          console.log("📤 URL:", `${API_BASE_URL}/bookings`);
          console.log("📤 Token (first 30 chars):", token.substring(0, 30) + "...");
          console.log("📤 Body:", {
-            roomType,
             roomName,
             roomPrice: pricePerNight,
             fullName,
@@ -314,8 +289,7 @@ export default function Booking_Home() {
             },
             body: JSON.stringify({
                roomId: roomId || undefined,
-               roomType,
-               roomName: roomName || roomType,
+               roomName: roomName || "",
                roomPrice: pricePerNight.toString(),
                fullName,
                email,
@@ -369,7 +343,7 @@ export default function Booking_Home() {
                      const tax = total * 0.08;
                      const finalAmount = total + tax;
 
-                     const resolvedRoomName = booking.room?.name || booking.roomName || roomName || roomType;
+                     const resolvedRoomName = booking.room?.name || booking.roomName || roomName || undefined;
 
                      billObj = {
                         _id: booking._id ? `temp-${booking._id}` : `temp-${Date.now()}`,
@@ -381,12 +355,12 @@ export default function Booking_Home() {
                         },
                         roomInfo: {
                            roomName: resolvedRoomName,
-                           roomType: booking.roomType || roomType,
+                           // roomType: booking.roomType || undefined,
                            nightlyPrice,
                         },
                         bookingDetails: {
                            roomName: resolvedRoomName,
-                           roomType: booking.roomType || roomType,
+                           // roomType: booking.roomType || undefined,
                            nightlyPrice,
                            nights,
                            guests: booking.guests || guests,
@@ -578,27 +552,11 @@ export default function Booking_Home() {
                                           </div>
                                        </div>
                                     ) : (
-                                       // Dropdown chọn loại phòng chung
                                        <div className="relative">
                                           <div className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400"><Hotel className="w-5 h-5" /></div>
-                                          <select
-                                             className="w-full pl-12 pr-4 py-3 border border-gray-300 rounded-xl focus:border-slate-500 focus:ring-4 focus:ring-slate-100 outline-none transition-all duration-300 font-medium appearance-none bg-white cursor-pointer"
-                                             value={roomType}
-                                             onChange={(e) => {
-                                                const newType = e.target.value as keyof typeof ROOM_TYPES;
-                                                setRoomType(newType);
-                                                setRoomPrice(""); // Reset room price khi đổi loại phòng
-                                             }}
-                                          >
-                                             {Object.keys(ROOM_TYPES).map(type => (
-                                                <option key={type} value={type}>
-                                                   {type}
-                                                </option>
-                                             ))}
-                                          </select>
+                                          <div className="w-full pl-12 pr-4 py-3 border border-gray-300 rounded-xl bg-white text-gray-600">Vui lòng chọn phòng trên trang danh sách</div>
                                        </div>
                                     )}
-                                    {!roomName && <p className="text-xs text-gray-500 mt-1">{ROOM_TYPES[roomType]?.description || ""}</p>}
                                  </div>
                                  <div>
                                     <label className="block text-sm font-bold text-gray-700 mb-2">Số khách</label>
@@ -650,7 +608,7 @@ export default function Booking_Home() {
                                           {formatPrice(
                                              roomPrice
                                                 ? parseFloat(roomPrice.replace(/\./g, ""))
-                                                : (ROOM_TYPES[roomType]?.price || 0)
+                                                : 0
                                           )} ₫
                                        </p>
                                        {checkIn && checkOut && (

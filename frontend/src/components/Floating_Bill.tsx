@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Receipt, X, ArrowLeft, Trash2, CheckCircle, Shield, RefreshCw, DollarSign, Headphones } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
+import { billService } from "@/services/billService";
 import qrPaymentImage from "@/assets/Screenshot 2025-12-10 235114.png";
 import { rooms } from "@/data/room";
 
@@ -65,6 +66,16 @@ const FloatingBills = () => {
    const [selectedBillForExtras, setSelectedBillForExtras] = useState<string>(''); // Bill ID cho dịch vụ/ẩm thực
    const { user } = useAuth();
    const API_BASE_URL = import.meta.env.VITE_API_URL || "/api";
+
+   const getExtrasKey = (u?: any) => {
+      try { const id = u?._id || u?.id; return id ? `extras_cache_${id}` : 'extras_cache'; } catch { return 'extras_cache'; }
+   };
+
+   const getCachedExtras = (u?: any) => {
+      const key = getExtrasKey(u);
+      const raw = localStorage.getItem(key) || localStorage.getItem('extras_cache');
+      return raw ? JSON.parse(raw) : null;
+   };
    const contentRef = useRef<HTMLDivElement>(null);
 
    // Hydrate from last cached bill and extras in case network fetch is slow/empty
@@ -102,18 +113,15 @@ const FloatingBills = () => {
             setBills(loadedBills);
          }
 
-         // Load extras from localStorage
-         const extrasRaw = localStorage.getItem("extras_cache");
-         if (extrasRaw) {
-            try {
-               const cachedExtras = JSON.parse(extrasRaw) as ExtraItem[];
-               if (Array.isArray(cachedExtras) && cachedExtras.length > 0) {
-                  console.log("💾 Loaded cached extras from localStorage:", cachedExtras.length, "items");
-                  setExtras(cachedExtras);
-               }
-            } catch (err) {
-               console.warn("⚠️ Could not load cached extras:", err);
+         // Load extras from localStorage (per-user key, with fallback)
+         try {
+            const cachedExtras = getCachedExtras(user) as ExtraItem[] | null;
+            if (Array.isArray(cachedExtras) && cachedExtras.length > 0) {
+               console.log("💾 Loaded cached extras from localStorage:", cachedExtras.length, "items");
+               setExtras(cachedExtras);
             }
+         } catch (err) {
+            console.warn("⚠️ Could not load cached extras:", err);
          }
       } catch (err) {
          console.warn("⚠️ Could not load cached bill(s):", err);
@@ -138,18 +146,21 @@ const FloatingBills = () => {
    // Save extras to localStorage whenever they change
    useEffect(() => {
       try {
+         const key = getExtrasKey(user);
          if (extras.length > 0) {
-            localStorage.setItem("extras_cache", JSON.stringify(extras));
-            console.log("💾 Saved", extras.length, "extras to localStorage");
+            localStorage.setItem(key, JSON.stringify(extras));
+            // also maintain generic fallback for backwards compatibility
+            try { localStorage.setItem('extras_cache', JSON.stringify(extras)); } catch {}
+            console.log("💾 Saved", extras.length, "extras to localStorage", key);
          } else {
-            localStorage.removeItem("extras_cache");
-            console.log("🗑️ Cleared extras cache from localStorage");
+            localStorage.removeItem(key);
+            try { localStorage.removeItem('extras_cache'); } catch {}
+            console.log("🗑️ Cleared extras cache from localStorage", key);
          }
       } catch (err) {
          console.warn("⚠️ Could not save extras to localStorage:", err);
       }
-   }, [extras]);
-
+   }, [extras, user]);
    // Define fetchBills first so it can be used in useEffect
    const fetchBills = useCallback(async () => {
       setLoading(true);
@@ -250,6 +261,49 @@ const FloatingBills = () => {
             // ignore
          }
 
+         // Extract extras from bills if they contain extras array
+         let serverExtras: ExtraItem[] = [];
+         billsData.forEach((bill: any) => {
+            if (Array.isArray(bill.extras)) {
+               bill.extras.forEach((extra: any) => {
+                  serverExtras.push({
+                     id: (extra._id || extra.id) ? (extra._id || extra.id).toString() : `${bill._id}-${extra.title}`,
+                     type: extra.type || 'service',
+                     title: extra.title,
+                     price: Number(extra.price || 0),
+                     quantity: Number(extra.quantity || 1),
+                     image: extra.image,
+                     billId: bill._id || bill.billNumber,
+                  });
+               });
+            }
+         });
+
+         // Merge server extras with any cached extras (avoid duplicate items)
+         try {
+            const cached = getCachedExtras(user) || [];
+            const merged = [...serverExtras];
+            const key = (e: ExtraItem) => `${e.billId}::${e.title}::${e.price}::${e.quantity}`;
+            const present = new Set(merged.map(key));
+            (cached as ExtraItem[]).forEach(c => {
+               if (!present.has(key(c))) {
+                  merged.push(c);
+               }
+            });
+            if (merged.length > 0) {
+               setExtras(merged);
+               try { localStorage.setItem(getExtrasKey(user), JSON.stringify(merged)); } catch {}
+               try { localStorage.setItem('extras_cache', JSON.stringify(merged)); } catch {}
+            }
+         } catch (err) {
+            // fallback: set to serverExtras only
+            if (serverExtras.length > 0) {
+               setExtras(serverExtras);
+               try { localStorage.setItem(getExtrasKey(user), JSON.stringify(serverExtras)); } catch {}
+               try { localStorage.setItem('extras_cache', JSON.stringify(serverExtras)); } catch {}
+            }
+         }
+
          // Set bills from server (already filtered by deleted_bills)
          // This ensures server data is authoritative but respects local deletions
          console.log("✅ Setting", billsData.length, "bills from server (filtered deleted)");
@@ -279,6 +333,55 @@ const FloatingBills = () => {
          fetchBills();
       }
    }, [isOpen, user, fetchBills]);
+
+   // Sync extras when bills change (re-match billIds)
+   // When bills reload from server, they have new _id values
+   // But cached extras still have old billId values, so we need to re-match them
+   useEffect(() => {
+      if (bills.length === 0 || extras.length === 0) {
+         return;
+      }
+
+      console.log("🔄 Syncing", extras.length, "extras with", bills.length, "bills...");
+
+      // Build a map of bill IDs we have
+      const billIdSet = new Set<string>();
+      bills.forEach(b => {
+         if (b._id) billIdSet.add(b._id);
+         if (b.billNumber) billIdSet.add(b.billNumber);
+      });
+
+      let needsUpdate = false;
+
+      // Check if any extras have billIds that don't match current bills
+      const updatedExtras = extras.map(extra => {
+         // If this extra's billId matches a current bill, keep it
+         if (extra.billId && billIdSet.has(extra.billId)) {
+            return extra;
+         }
+
+         // Otherwise, try to find a matching bill by billNumber
+         // Look for a bill that might be the same physical bill with a new server _id
+         for (const bill of bills) {
+            // If this is the only bill or the first bill, assign to it
+            if (bills.length === 1 || bills[0]._id === bill._id) {
+               if (extra.billId !== bill._id) {
+                  console.log(`🔁 Re-matching extra "${extra.title}" from ${extra.billId} to ${bill._id}`);
+                  needsUpdate = true;
+                  return { ...extra, billId: bill._id };
+               }
+               break;
+            }
+         }
+
+         return extra;
+      });
+
+      if (needsUpdate) {
+         console.log("💾 Updating extras with re-matched billIds");
+         setExtras(updatedExtras);
+      }
+   }, [bills]);
 
    // Listen for bookingCreated to refresh bills and show green dot
    useEffect(() => {
@@ -557,7 +660,7 @@ const FloatingBills = () => {
 
    // Listen for service/food selection from Service and Food pages
    useEffect(() => {
-      const handleServiceSelect = (e: any) => {
+      const handleServiceSelect = async (e: any) => {
          console.log("🎯 Service selected:", e?.detail);
          const service = e?.detail;
          if (!bills.length) {
@@ -566,7 +669,17 @@ const FloatingBills = () => {
          }
          if (service && service.title && service.price) {
             const priceValue = parseInt(service.price.replace(/[^\d]/g, '')) || 0;
-            const targetBillId = bills[0]?._id || bills[0]?.billNumber || "";
+            // Resolve target billId: prefer selectedBillForExtras, then current group's first bill, then global first bill
+            const resolveTargetBillId = (): string => {
+               if (selectedBillForExtras) return selectedBillForExtras;
+               if (selectedGroup && Array.isArray(selectedGroup.bills) && selectedGroup.bills.length > 0) {
+                  const first = selectedGroup.bills[0];
+                  return (first._id || first.billNumber || '');
+               }
+               const firstGlobal = bills[0];
+               return (firstGlobal?._id || firstGlobal?.billNumber || '');
+            };
+            const targetBillId = resolveTargetBillId();
             const newItem: ExtraItem = {
                id: `service-${Date.now()}-${Math.random()}`,
                type: 'service',
@@ -576,11 +689,34 @@ const FloatingBills = () => {
                image: service.img,
                billId: targetBillId,
             };
+            // If user is authenticated and we have a billId, persist to server
+            const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+            if (token && targetBillId) {
+               try {
+                  await billService.addExtra(targetBillId, {
+                     type: newItem.type,
+                     title: newItem.title,
+                     price: newItem.price,
+                     quantity: newItem.quantity,
+                     image: newItem.image,
+                  });
+                  // Refresh bills from server to pick up the new extra
+                  fetchBills();
+                  setIsOpen(true);
+                  setActiveTab('bills');
+                  setHasNewBill(true);
+                  return;
+               } catch (err) {
+                  console.warn("Could not persist extra to server, falling back to local cache:", err);
+               }
+            }
+
             setExtras(prev => {
-               const existing = prev.find(item => item.title === service.title && item.type === 'service');
+               // Check billId to ensure we only update the extra for the correct room
+               const existing = prev.find(item => item.title === service.title && item.type === 'service' && item.billId === targetBillId);
                if (existing) {
                   return prev.map(item =>
-                     item.title === service.title && item.type === 'service'
+                     item.title === service.title && item.type === 'service' && item.billId === targetBillId
                         ? { ...item, quantity: item.quantity + 1 }
                         : item
                   );
@@ -593,7 +729,7 @@ const FloatingBills = () => {
          }
       };
 
-      const handleFoodSelect = (e: any) => {
+      const handleFoodSelect = async (e: any) => {
          console.log("🍽️ Food selected:", e?.detail);
          const food = e?.detail;
          if (!bills.length) {
@@ -602,7 +738,17 @@ const FloatingBills = () => {
          }
          if (food && food.title && food.price) {
             const priceValue = parseInt(food.price.replace(/[^\d]/g, '')) || 0;
-            const targetBillId = bills[0]?._id || bills[0]?.billNumber || "";
+            // Resolve target billId: prefer selectedBillForExtras, then current group's first bill, then global first bill
+            const resolveTargetBillId = (): string => {
+               if (selectedBillForExtras) return selectedBillForExtras;
+               if (selectedGroup && Array.isArray(selectedGroup.bills) && selectedGroup.bills.length > 0) {
+                  const first = selectedGroup.bills[0];
+                  return (first._id || first.billNumber || '');
+               }
+               const firstGlobal = bills[0];
+               return (firstGlobal?._id || firstGlobal?.billNumber || '');
+            };
+            const targetBillId = resolveTargetBillId();
             const newItem: ExtraItem = {
                id: `food-${Date.now()}-${Math.random()}`,
                type: 'food',
@@ -612,11 +758,32 @@ const FloatingBills = () => {
                image: food.images?.[0] || food.img,
                billId: targetBillId,
             };
+            const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+            if (token && targetBillId) {
+               try {
+                  await billService.addExtra(targetBillId, {
+                     type: newItem.type,
+                     title: newItem.title,
+                     price: newItem.price,
+                     quantity: newItem.quantity,
+                     image: newItem.image,
+                  });
+                  fetchBills();
+                  setIsOpen(true);
+                  setActiveTab('bills');
+                  setHasNewBill(true);
+                  return;
+               } catch (err) {
+                  console.warn("Could not persist food extra to server, falling back to local cache:", err);
+               }
+            }
+
             setExtras(prev => {
-               const existing = prev.find(item => item.title === food.title && item.type === 'food');
+               // Check billId to ensure we only update the extra for the correct room
+               const existing = prev.find(item => item.title === food.title && item.type === 'food' && item.billId === targetBillId);
                if (existing) {
                   return prev.map(item =>
-                     item.title === food.title && item.type === 'food'
+                     item.title === food.title && item.type === 'food' && item.billId === targetBillId
                         ? { ...item, quantity: item.quantity + 1 }
                         : item
                   );
@@ -636,7 +803,7 @@ const FloatingBills = () => {
          window.removeEventListener("selectService", handleServiceSelect);
          window.removeEventListener("selectFood", handleFoodSelect);
       };
-   }, [bills]);
+   }, [bills, selectedBillForExtras]);
 
    // On mount, consume any queued extras saved by other pages (e.g., Food page)
    useEffect(() => {
@@ -652,7 +819,19 @@ const FloatingBills = () => {
             queued.forEach(q => {
                try {
                   const priceValue = parseInt((q.price || '').toString().replace(/[^\d]/g, '')) || 0;
-                  const existing = next.find(item => item.title === q.title && item.type === 'service');
+                  // Resolve target bill similarly to event handlers
+                  const resolveTargetBillId = (): string => {
+                     if (selectedBillForExtras) return selectedBillForExtras;
+                     if (selectedGroup && Array.isArray(selectedGroup.bills) && selectedGroup.bills.length > 0) {
+                        const first = selectedGroup.bills[0];
+                        return (first._id || first.billNumber || '');
+                     }
+                     const firstGlobal = bills[0];
+                     return (firstGlobal?._id || firstGlobal?.billNumber || '');
+                  };
+                  const targetBillId = resolveTargetBillId();
+
+                  const existing = next.find(item => item.title === q.title && item.type === 'service' && item.billId === targetBillId);
                   if (existing) {
                      existing.quantity = existing.quantity + 1;
                   } else {
@@ -662,8 +841,9 @@ const FloatingBills = () => {
                         title: q.title,
                         price: priceValue,
                         quantity: 1,
-                        image: q.img
-                     });
+                        image: q.img,
+                        billId: targetBillId
+                     } as ExtraItem);
                   }
                } catch (err) {
                   // ignore parse errors per item
@@ -1099,7 +1279,12 @@ const FloatingBills = () => {
                                        {group.bills.map((bill) => (
                                           <div
                                              key={bill._id || bill.billNumber}
-                                             className="bg-gradient-to-br from-white via-teal-50 to-green-50 rounded-xl border-2 border-[#2fd680] p-5 hover:shadow-lg transition-shadow relative"
+                                             className="bg-gradient-to-br from-white via-teal-50 to-green-50 rounded-xl border-2 border-[#2fd680] p-5 hover:shadow-lg transition-shadow relative cursor-pointer"
+                                             onClick={() => {
+                                                const id = bill._id || bill.billNumber;
+                                                setSelectedBillForExtras(id);
+                                                setSelectedGroup(group);
+                                             }}
                                           >
                                              {/* Delete Button */}
                                              <button
@@ -1109,14 +1294,14 @@ const FloatingBills = () => {
                                                    const billId = bill._id || bill.billNumber;
 
                                                    try {
-                                                      // Call API to cancel bill on server
-                                                      const token = localStorage.getItem('auth_token');
+                                                      const token = localStorage.getItem('auth_token') || localStorage.getItem('token');
                                                       if (!token) {
                                                          alert('Vui lòng đăng nhập lại');
                                                          return;
                                                       }
 
-                                                      const response = await fetch(`http://localhost:5000/api/bills/${billId}/cancel`, {
+                                                      const url = `${API_BASE_URL}/bills/${billId}/cancel`;
+                                                      const response = await fetch(url, {
                                                          method: 'DELETE',
                                                          headers: {
                                                             'Authorization': `Bearer ${token}`,
@@ -1133,6 +1318,9 @@ const FloatingBills = () => {
                                                       const newList = bills.filter((b) => (b._id || b.billNumber) !== billId);
                                                       setBills(newList);
 
+                                                      // Remove extras associated with this bill
+                                                      setExtras(prev => prev.filter(extra => extra.billId !== billId));
+
                                                       // Update cache
                                                       try {
                                                          localStorage.setItem('bills_cache', JSON.stringify(newList));
@@ -1147,7 +1335,9 @@ const FloatingBills = () => {
                                                          setSelectedGroup(null);
                                                          try {
                                                             localStorage.removeItem('last_bill');
-                                                            localStorage.removeItem('extras_cache');
+                                                            // remove both user-keyed and generic extras cache
+                                                            try { localStorage.removeItem(getExtrasKey(user)); } catch {}
+                                                            try { localStorage.removeItem('extras_cache'); } catch {}
                                                             localStorage.removeItem('bills_cache');
                                                          } catch (err) {
                                                             // ignore
@@ -1248,366 +1438,353 @@ const FloatingBills = () => {
                                        <div className="border-t-2 border-[#2fd680] pt-4 mt-4">
                                           <h3 className="font-bold text-xl text-[#2fd680] mb-4">Thêm dịch vụ & ẩm thực</h3>
 
-                                          {/* Room Selection for Extras */}
-                                          {group.bills.length > 0 && (
-                                             <div className="mb-4 p-3 bg-white rounded-xl border-2 border-[#2fd680]">
-                                                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                                                   Chọn phòng để thêm dịch vụ/ẩm thực:
-                                                </label>
-                                                <select
-                                                   value={selectedBillForExtras || group.bills[0]?._id || group.bills[0]?.billNumber || ''}
-                                                   onChange={(e) => setSelectedBillForExtras(e.target.value)}
-                                                   className="w-full p-3 border-2 border-[#2fd680] rounded-lg bg-gradient-to-r from-teal-50 to-green-50 text-gray-800 font-medium focus:outline-none focus:ring-2 focus:ring-[#2fd680]"
-                                                >
-                                                   {group.bills.map((b) => (
-                                                      <option key={b._id || b.billNumber} value={b._id || b.billNumber}>
-                                                         {getBillDisplayLabel(b)}
-                                                      </option>
-                                                   ))}
-                                                </select>
-                                             </div>
-                                          )}
+                                          {/* Bill selection scoped to this group to avoid cross-group mismatch */}
+                                          {(() => {
+                                             const resolveGroupBillId = (): string => {
+                                                const matched = selectedBillForExtras ? group.bills.find(b => (b._id || b.billNumber) === selectedBillForExtras) : undefined;
+                                                return (matched?._id || matched?.billNumber) || group.bills[0]?._id || group.bills[0]?.billNumber || '';
+                                             };
+                                             const groupBillId = resolveGroupBillId();
 
-                                          {/* Services */}
-                                          <div className="mb-6">
-                                             <h4 className="font-semibold text-gray-700 mb-3 flex items-center gap-2">
-                                                <span className="text-[#2fd680]">●</span> Dịch vụ
-                                             </h4>
-                                             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                                {[
-                                                   { title: "Giặt ủi", price: "50.000 VNĐ / kg", img: "https://cdn.pixabay.com/photo/2021/02/02/12/38/iron-5973837_1280.jpg" },
-                                                   { title: "Đưa đón sân bay", price: "1.000.000 VNĐ / lượt", img: "https://cdn.pixabay.com/photo/2018/02/14/15/50/lufthansa-regional-3153209_1280.jpg" },
-                                                   { title: "Ăn sáng Buffet", price: "Bao gồm trong giá phòng", img: "https://images.unsplash.com/photo-1722477936580-84aa10762b0b?auto=format&fit=crop&w=800&q=60" },
-                                                   { title: "Hồ bơi vô cực", price: "Miễn phí cho khách lưu trú", img: "https://images.unsplash.com/photo-1571003123894-1f0594d2b5d9?auto=format&fit=crop&w=800&q=60" },
-                                                   { title: "Nhà hàng & Quầy Bar", price: "Từ 300.000 VNĐ / món", img: "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=800&q=60" },
-                                                   { title: "Spa & Trị liệu", price: "500.000 VNĐ / liệu trình", img: "https://images.unsplash.com/photo-1540555700478-4be289fbecef?auto=format&fit=crop&w=800&q=60" },
-                                                   { title: "Phòng Gym & Fitness", price: "Miễn phí cho khách lưu trú", img: "https://images.unsplash.com/photo-1571902943202-507ec2618e8f?auto=format&fit=crop&w=800&q=60" },
-                                                   { title: "Cho thuê xe máy", price: "120.000 VNĐ / ngày", img: "https://images.unsplash.com/photo-1558981403-c5f9899a28bc?auto=format&fit=crop&w=800&q=60" },
-                                                   { title: "Tour du lịch", price: "Từ 800.000 VNĐ / người", img: "https://images.unsplash.com/photo-1476514525535-07fb3b4ae5f1?auto=format&fit=crop&w=800&q=60" },
-                                                ].map((service, idx) => (
-                                                   <div key={idx} className="flex items-center justify-between p-3 border border-gray-200 rounded-lg hover:border-[#2fd680] transition-colors">
-                                                      <div className="flex-1">
-                                                         <p className="font-medium text-gray-800">{service.title}</p>
-                                                         <p className="text-sm text-gray-600">{service.price}</p>
+                                             return (
+                                                <>
+                                                   {/* Room Selection for Extras */}
+                                                   {group.bills.length > 0 && (
+                                                      <div className="mb-4 p-3 bg-white rounded-xl border-2 border-[#2fd680]">
+                                                         <label className="block text-sm font-semibold text-gray-700 mb-2">
+                                                            Chọn phòng để thêm dịch vụ/ẩm thực:
+                                                         </label>
+                                                         <select
+                                                            value={groupBillId}
+                                                            onChange={(e) => setSelectedBillForExtras(e.target.value)}
+                                                            className="w-full p-3 border-2 border-[#2fd680] rounded-lg bg-gradient-to-r from-teal-50 to-green-50 text-gray-800 font-medium focus:outline-none focus:ring-2 focus:ring-[#2fd680]"
+                                                         >
+                                                            {group.bills.map((b) => (
+                                                               <option key={b._id || b.billNumber} value={b._id || b.billNumber}>
+                                                                  {getBillDisplayLabel(b)}
+                                                               </option>
+                                                            ))}
+                                                         </select>
                                                       </div>
-                                                      <button
-                                                         onClick={() => {
-                                                            const targetBillId = selectedBillForExtras || group.bills[0]?._id || group.bills[0]?.billNumber || '';
-                                                            const priceValue = parseInt(service.price.replace(/[^\d]/g, '')) || 0;
-                                                            const newItem: ExtraItem = {
-                                                               id: `service-${Date.now()}-${Math.random()}`,
-                                                               type: 'service',
-                                                               title: service.title,
-                                                               price: priceValue,
-                                                               quantity: 1,
-                                                               image: service.img,
-                                                               billId: targetBillId,
-                                                            };
-                                                            setExtras(prev => {
-                                                               const existing = prev.find(item => item.title === service.title && item.type === 'service' && item.billId === targetBillId);
-                                                               if (existing) {
-                                                                  return prev.map(item =>
-                                                                     item.title === service.title && item.type === 'service' && item.billId === targetBillId
-                                                                        ? { ...item, quantity: item.quantity + 1 }
-                                                                        : item
-                                                                  );
-                                                               }
-                                                               return [...prev, newItem];
-                                                            });
-                                                            try {
-                                                               setRecentlyAdded(prev => ({ ...prev, [service.title]: true }));
-                                                               setTimeout(() => setRecentlyAdded(prev => { const next = { ...prev }; delete next[service.title]; return next; }), 1800);
-                                                            } catch (err) {
-                                                               // ignore
-                                                            }
-                                                         }}
-                                                         disabled={!!recentlyAdded[service.title]}
-                                                         className={`ml-3 px-4 py-2 rounded-lg transition-colors text-sm font-medium ${recentlyAdded[service.title] ? 'bg-gray-200 text-gray-700 cursor-not-allowed' : 'bg-[#2fd680] text-white hover:bg-[#25a060]'}`}
-                                                      >
-                                                         {recentlyAdded[service.title] ? 'Đã thêm' : 'Thêm'}
-                                                      </button>
-                                                   </div>
-                                                ))}
-                                             </div>
-                                          </div>
+                                                   )}
 
-                                          {/* Food */}
-                                          <div>
-                                             <h4 className="font-semibold text-gray-700 mb-3 flex items-center gap-2">
-                                                <span className="text-[#2fd680]">●</span> Ẩm thực
-                                             </h4>
-                                             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                                {[
-                                                   { title: "Phở bò", price: "95.000 VNĐ", img: "https://images.unsplash.com/photo-1582878826629-29b7ad1cdc43?auto=format&fit=crop&w=800&q=60" },
-                                                   { title: "Gỏi cuốn", price: "75.000 VNĐ", img: "https://plus.unsplash.com/premium_photo-1663850685033-a8557389963e?auto=format&fit=crop&w=600&q=60" },
-                                                   { title: "Cơm Gà Hải Nam", price: "110.000 VNĐ", img: "https://images.unsplash.com/photo-1569058242252-623df46b5025?auto=format&fit=crop&w=600&q=60" },
-                                                   { title: "Sashimi Set", price: "250.000 VNĐ", img: "https://images.unsplash.com/photo-1553621042-f6e147245754?auto=format&fit=crop&w=800&q=60" },
-                                                   { title: "Pad Thái", price: "135.000 VNĐ", img: "https://images.unsplash.com/photo-1655091273851-7bdc2e578a88?auto=format&fit=crop&w=600&q=60" },
-                                                   { title: "Vịt Quay Bắc Kinh", price: "350.000 VNĐ", img: "https://media.istockphoto.com/id/1557558337/vi/anh/c%E1%BA%AFt-v%E1%BB%8Bt-quay-b%E1%BA%AFc-kinh.jpg?s=612x612" },
-                                                   { title: "Steak Ribeye", price: "450.000 VNĐ", img: "https://media.istockphoto.com/id/522134088/vi/anh/steack-v%E1%BB%9Bi-c%C3%A0-chua.jpg?s=612x612" },
-                                                   { title: "Mỳ Ý Carbonara", price: "180.000 VNĐ", img: "https://media.istockphoto.com/id/470065924/vi/anh/cabonara-ramen.jpg?s=612x612" },
-                                                   { title: "Pizza Parma Ham", price: "220.000 VNĐ", img: "https://media.istockphoto.com/id/1167700422/vi/anh/meat-mix-pizza.jpg?s=612x612" },
-                                                   { title: "Salad Caesar", price: "150.000 VNĐ", img: "https://media.istockphoto.com/id/1495924977/vi/anh/m%E1%BB%99t-m%C3%B3n-salad-caesar.jpg?s=612x612" },
-                                                   { title: "Cá Hồi Áp Chảo", price: "280.000 VNĐ", img: "https://media.istockphoto.com/id/2211865912/vi/anh/fried-salmon-steak.jpg?s=612x612" },
-                                                   { title: "Sườn Cừu Nướng", price: "420.000 VNĐ", img: "https://media.istockphoto.com/id/1080892544/vi/anh/than-n%C6%B0%E1%BB%9Bng-s%C6%B0%E1%BB%9Dn-c%E1%BB%ABu.jpg?s=612x612" },
-                                                   { title: "Heineken", price: "55.000 VNĐ", img: "https://media.istockphoto.com/id/458411525/vi/anh/bia-heineken.jpg?s=612x612" },
-                                                   { title: "Tiger Crystal", price: "55.000 VNĐ", img: "https://m.media-amazon.com/images/I/71UFITN4MBL._AC_SL1200_.jpg" },
-                                                   { title: "Corona Extra", price: "70.000 VNĐ", img: "https://media.istockphoto.com/id/533717776/vi/anh/chai-bia-corona-extra.jpg?s=612x612" },
-                                                   { title: "Mojito Chanh Bạc Hà", price: "120.000 VNĐ", img: "https://media.gettyimages.com/id/1253999472/photo/mojito-cocktail.jpg?s=612x612" },
-                                                   { title: "Margarita", price: "140.000 VNĐ", img: "https://media.gettyimages.com/id/1646896493/photo/margarita-classic-style.jpg?s=612x612" },
-                                                   { title: "Espresso Martini", price: "160.000 VNĐ", img: "https://media.gettyimages.com/id/1455558757/photo/espresso-martini-cocktails.jpg?s=612x612" },
-                                                ].map((food, idx) => (
-                                                   <div key={idx} className="flex items-center justify-between p-3 border border-gray-200 rounded-lg hover:border-[#2fd680] transition-colors">
-                                                      <div className="flex-1">
-                                                         <p className="font-medium text-gray-800">{food.title}</p>
-                                                         <p className="text-sm text-gray-600">{food.price}</p>
+                                                   {/* Services */}
+                                                   <div className="mb-6">
+                                                      <h4 className="font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                                                         <span className="text-[#2fd680]">●</span> Dịch vụ
+                                                      </h4>
+                                                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                                         {[
+                                                            { title: "Giặt ủi", price: "50.000 VNĐ / kg", img: "https://cdn.pixabay.com/photo/2021/02/02/12/38/iron-5973837_1280.jpg" },
+                                                            { title: "Đưa đón sân bay", price: "1.000.000 VNĐ / lượt", img: "https://cdn.pixabay.com/photo/2018/02/14/15/50/lufthansa-regional-3153209_1280.jpg" },
+                                                            { title: "Ăn sáng Buffet", price: "Bao gồm trong giá phòng", img: "https://images.unsplash.com/photo-1722477936580-84aa10762b0b?auto=format&fit=crop&w=800&q=60" },
+                                                            { title: "Hồ bơi vô cực", price: "Miễn phí cho khách lưu trú", img: "https://images.unsplash.com/photo-1571003123894-1f0594d2b5d9?auto=format&fit=crop&w=800&q=60" },
+                                                            { title: "Nhà hàng & Quầy Bar", price: "Từ 300.000 VNĐ / món", img: "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=800&q=60" },
+                                                            { title: "Spa & Trị liệu", price: "500.000 VNĐ / liệu trình", img: "https://images.unsplash.com/photo-1540555700478-4be289fbecef?auto=format&fit=crop&w=800&q=60" },
+                                                            { title: "Phòng Gym & Fitness", price: "Miễn phí cho khách lưu trú", img: "https://images.unsplash.com/photo-1571902943202-507ec2618e8f?auto=format&fit=crop&w=800&q=60" },
+                                                            { title: "Cho thuê xe máy", price: "120.000 VNĐ / ngày", img: "https://images.unsplash.com/photo-1558981403-c5f9899a28bc?auto=format&fit=crop&w=800&q=60" },
+                                                            { title: "Tour du lịch", price: "Từ 800.000 VNĐ / người", img: "https://images.unsplash.com/photo-1476514525535-07fb3b4ae5f1?auto=format&fit=crop&w=800&q=60" },
+                                                         ].map((service, idx) => (
+                                                            <div key={idx} className="flex items-center justify-between p-3 border border-gray-200 rounded-lg hover:border-[#2fd680] transition-colors">
+                                                               <div className="flex-1">
+                                                                  <p className="font-medium text-gray-800">{service.title}</p>
+                                                                  <p className="text-sm text-gray-600">{service.price}</p>
+                                                               </div>
+                                                               <button
+                                                                  onClick={() => {
+                                                                     const targetBillId = resolveGroupBillId();
+                                                                     const priceValue = parseInt(service.price.replace(/[^\d]/g, '')) || 0;
+                                                                     const newItem: ExtraItem = {
+                                                                        id: `service-${Date.now()}-${Math.random()}`,
+                                                                        type: 'service',
+                                                                        title: service.title,
+                                                                        price: priceValue,
+                                                                        quantity: 1,
+                                                                        image: service.img,
+                                                                        billId: targetBillId,
+                                                                     };
+                                                                     setExtras(prev => {
+                                                                        const existing = prev.find(item => item.title === service.title && item.type === 'service' && item.billId === targetBillId);
+                                                                        if (existing) {
+                                                                           return prev.map(item =>
+                                                                              item.title === service.title && item.type === 'service' && item.billId === targetBillId
+                                                                                 ? { ...item, quantity: item.quantity + 1 }
+                                                                                 : item
+                                                                           );
+                                                                        }
+                                                                        return [...prev, newItem];
+                                                                     });
+                                                                     try {
+                                                                        setRecentlyAdded(prev => ({ ...prev, [service.title]: true }));
+                                                                        setTimeout(() => setRecentlyAdded(prev => { const next = { ...prev }; delete next[service.title]; return next; }), 1800);
+                                                                     } catch (err) {
+                                                                        // ignore
+                                                                     }
+                                                                  }}
+                                                                  disabled={!!recentlyAdded[service.title]}
+                                                                  className={`ml-3 px-4 py-2 rounded-lg transition-colors text-sm font-medium ${recentlyAdded[service.title] ? 'bg-gray-200 text-gray-700 cursor-not-allowed' : 'bg-[#2fd680] text-white hover:bg-[#25a060]'}`}
+                                                               >
+                                                                  {recentlyAdded[service.title] ? 'Đã thêm' : 'Thêm'}
+                                                               </button>
+                                                            </div>
+                                                         ))}
                                                       </div>
-                                                      <button
-                                                         onClick={() => {
-                                                            const targetBillId = selectedBillForExtras || group.bills[0]?._id || group.bills[0]?.billNumber || '';
-                                                            const priceValue = parseInt(food.price.replace(/[^\d]/g, '')) || 0;
-                                                            const newItem: ExtraItem = {
-                                                               id: `food-${Date.now()}-${Math.random()}`,
-                                                               type: 'food',
-                                                               title: food.title,
-                                                               price: priceValue,
-                                                               quantity: 1,
-                                                               image: food.img,
-                                                               billId: targetBillId,
-                                                            };
-                                                            setExtras(prev => {
-                                                               const existing = prev.find(item => item.title === food.title && item.type === 'food' && item.billId === targetBillId);
-                                                               if (existing) {
-                                                                  return prev.map(item =>
-                                                                     item.title === food.title && item.type === 'food' && item.billId === targetBillId
-                                                                        ? { ...item, quantity: item.quantity + 1 }
-                                                                        : item
-                                                                  );
-                                                               }
-                                                               return [...prev, newItem];
-                                                            });
-                                                            try {
-                                                               setRecentlyAdded(prev => ({ ...prev, [food.title]: true }));
-                                                               setTimeout(() => setRecentlyAdded(prev => { const next = { ...prev }; delete next[food.title]; return next; }), 1800);
-                                                            } catch (err) {
-                                                               // ignore
-                                                            }
-                                                         }}
-                                                         disabled={!!recentlyAdded[food.title]}
-                                                         className={`ml-3 px-4 py-2 rounded-lg transition-colors text-sm font-medium ${recentlyAdded[food.title] ? 'bg-gray-200 text-gray-700 cursor-not-allowed' : 'bg-[#2fd680] text-white hover:bg-[#25a060]'}`}
-                                                      >
-                                                         {recentlyAdded[food.title] ? 'Đã thêm' : 'Thêm'}
-                                                      </button>
                                                    </div>
-                                                ))}
-                                             </div>
-                                          </div>
+
+                                                   {/* Food */}
+                                                   <div>
+                                                      <h4 className="font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                                                         <span className="text-[#2fd680]">●</span> Ẩm thực
+                                                      </h4>
+                                                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                                         {[
+                                                            { title: "Phở bò", price: "95.000 VNĐ", img: "https://images.unsplash.com/photo-1582878826629-29b7ad1cdc43?auto=format&fit=crop&w=800&q=60" },
+                                                            { title: "Gỏi cuốn", price: "75.000 VNĐ", img: "https://plus.unsplash.com/premium_photo-1663850685033-a8557389963e?auto=format&fit=crop&w=600&q=60" },
+                                                            { title: "Cơm Gà Hải Nam", price: "110.000 VNĐ", img: "https://images.unsplash.com/photo-1569058242252-623df46b5025?auto=format&fit=crop&w=600&q=60" },
+                                                            { title: "Sashimi Set", price: "250.000 VNĐ", img: "https://images.unsplash.com/photo-1553621042-f6e147245754?auto=format&fit=crop&w=800&q=60" },
+                                                            { title: "Pad Thái", price: "135.000 VNĐ", img: "https://images.unsplash.com/photo-1655091273851-7bdc2e578a88?auto=format&fit=crop&w=600&q=60" },
+                                                            { title: "Vịt Quay Bắc Kinh", price: "350.000 VNĐ", img: "https://media.istockphoto.com/id/1557558337/vi/anh/c%E1%BA%AFt-v%E1%BB%8Bt-quay-b%E1%BA%AFc-kinh.jpg?s=612x612" },
+                                                            { title: "Steak Ribeye", price: "450.000 VNĐ", img: "https://media.istockphoto.com/id/522134088/vi/anh/steack-v%E1%BB%9Bi-c%C3%A0-chua.jpg?s=612x612" },
+                                                            { title: "Mỳ Ý Carbonara", price: "180.000 VNĐ", img: "https://media.istockphoto.com/id/470065924/vi/anh/cabonara-ramen.jpg?s=612x612" },
+                                                            { title: "Pizza Parma Ham", price: "220.000 VNĐ", img: "https://media.istockphoto.com/id/1167700422/vi/anh/meat-mix-pizza.jpg?s=612x612" },
+                                                            { title: "Salad Caesar", price: "150.000 VNĐ", img: "https://media.istockphoto.com/id/1495924977/vi/anh/m%E1%BB%99t-m%C3%B3n-salad-caesar.jpg?s=612x612" },
+                                                            { title: "Cá Hồi Áp Chảo", price: "280.000 VNĐ", img: "https://media.istockphoto.com/id/2211865912/vi/anh/fried-salmon-steak.jpg?s=612x612" },
+                                                            { title: "Sườn Cừu Nướng", price: "420.000 VNĐ", img: "https://media.istockphoto.com/id/1080892544/vi/anh/than-n%C6%B0%E1%BB%9Bng-s%C6%B0%E1%BB%9Dn-c%E1%BB%ABu.jpg?s=612x612" },
+                                                            { title: "Heineken", price: "55.000 VNĐ", img: "https://media.istockphoto.com/id/458411525/vi/anh/bia-heineken.jpg?s=612x612" },
+                                                            { title: "Tiger Crystal", price: "55.000 VNĐ", img: "https://m.media-amazon.com/images/I/71UFITN4MBL._AC_SL1200_.jpg" },
+                                                            { title: "Corona Extra", price: "70.000 VNĐ", img: "https://media.istockphoto.com/id/533717776/vi/anh/chai-bia-corona-extra.jpg?s=612x612" },
+                                                            { title: "Mojito Chanh Bạc Hà", price: "120.000 VNĐ", img: "https://media.gettyimages.com/id/1253999472/photo/mojito-cocktail.jpg?s=612x612" },
+                                                            { title: "Margarita", price: "140.000 VNĐ", img: "https://media.gettyimages.com/id/1646896493/photo/margarita-classic-style.jpg?s=612x612" },
+                                                            { title: "Espresso Martini", price: "160.000 VNĐ", img: "https://media.gettyimages.com/id/1455558757/photo/espresso-martini-cocktails.jpg?s=612x612" },
+                                                         ].map((food, idx) => (
+                                                            <div key={idx} className="flex items-center justify-between p-3 border border-gray-200 rounded-lg hover:border-[#2fd680] transition-colors">
+                                                               <div className="flex-1">
+                                                                  <p className="font-medium text-gray-800">{food.title}</p>
+                                                                  <p className="text-sm text-gray-600">{food.price}</p>
+                                                               </div>
+                                                               <button
+                                                                  onClick={() => {
+                                                                     const targetBillId = resolveGroupBillId();
+                                                                     const priceValue = parseInt(food.price.replace(/[^\d]/g, '')) || 0;
+                                                                     const newItem: ExtraItem = {
+                                                                        id: `food-${Date.now()}-${Math.random()}`,
+                                                                        type: 'food',
+                                                                        title: food.title,
+                                                                        price: priceValue,
+                                                                        quantity: 1,
+                                                                        image: food.img,
+                                                                        billId: targetBillId,
+                                                                     };
+                                                                     setExtras(prev => {
+                                                                        const existing = prev.find(item => item.title === food.title && item.type === 'food' && item.billId === targetBillId);
+                                                                        if (existing) {
+                                                                           return prev.map(item =>
+                                                                              item.title === food.title && item.type === 'food' && item.billId === targetBillId
+                                                                                 ? { ...item, quantity: item.quantity + 1 }
+                                                                                 : item
+                                                                           );
+                                                                        }
+                                                                        return [...prev, newItem];
+                                                                     });
+                                                                     try {
+                                                                        setRecentlyAdded(prev => ({ ...prev, [food.title]: true }));
+                                                                        setTimeout(() => setRecentlyAdded(prev => { const next = { ...prev }; delete next[food.title]; return next; }), 1800);
+                                                                     } catch (err) {
+                                                                        // ignore
+                                                                     }
+                                                                  }}
+                                                                  disabled={!!recentlyAdded[food.title]}
+                                                                  className={`ml-3 px-4 py-2 rounded-lg transition-colors text-sm font-medium ${recentlyAdded[food.title] ? 'bg-gray-200 text-gray-700 cursor-not-allowed' : 'bg-[#2fd680] text-white hover:bg-[#25a060]'}`}
+                                                               >
+                                                                  {recentlyAdded[food.title] ? 'Đã thêm' : 'Thêm'}
+                                                               </button>
+                                                            </div>
+                                                         ))}
+                                                      </div>
+                                                   </div>
+                                                </>
+                                             );
+                                          })()}
                                        </div>
 
-                                       {/* Extras Section - Services & Food */}
-                                       {extras.length > 0 && (
-                                          <>
+                                       {/* Extras Section - Services & Food (grouped per room/bill) */}
+                                       {(() => {
+                                          const sections = group.bills.map((b) => {
+                                             const billId = b._id || b.billNumber;
+                                             const filteredExtras = extras.filter(e => e.billId === billId);
+                                             if (filteredExtras.length === 0) return null;
+
+                                             return (
+                                                <div key={`extras-${billId}`} className="mb-4">
+                                                   <h5 className="font-semibold text-gray-500 mb-2">
+                                                      PHÒNG: {getBillDisplayLabel(b as Bill)}
+                                                   </h5>
+
+                                                   {/* Services Section */}
+                                                   {filteredExtras.filter(item => item.type === 'service').length > 0 && (
+                                                      <div className="mb-6">
+                                                         <h5 className="font-semibold text-gray-700 mb-3">Dịch vụ</h5>
+                                                         <div className="space-y-3">
+                                                            {filteredExtras.filter(item => item.type === 'service').map((item) => (
+                                                               <div
+                                                                  key={item.id}
+                                                                  className="border rounded-lg p-4 bg-white hover:shadow-md transition-shadow relative"
+                                                               >
+                                                                  {/* Delete Button */}
+                                                                  <button
+                                                                     onClick={() => {
+                                                                        if (window.confirm(`Bạn có chắc muốn xóa "${item.title}"?`)) {
+                                                                           setExtras(prev => prev.filter(e => e.id !== item.id));
+                                                                        }
+                                                                     }}
+                                                                     className="absolute top-2 right-2 p-2 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors z-10"
+                                                                     title="Xóa"
+                                                                  >
+                                                                     <Trash2 className="w-5 h-5" />
+                                                                  </button>
+
+                                                                  {/* Header */}
+                                                                  <div className="flex justify-between items-start mb-3 pr-10">
+                                                                     <div>
+                                                                        <h3 className="font-bold text-lg">{item.title}</h3>
+                                                                     </div>
+                                                                  </div>
+
+                                                                  {/* Info */}
+                                                                  <div className="border-t pt-3 space-y-2 text-sm">
+                                                                     <div className="flex justify-between">
+                                                                        <span className="text-gray-600">Đơn giá:</span>
+                                                                        <span className="font-medium">{formatCurrency(item.price)}</span>
+                                                                     </div>
+                                                                     <div className="flex justify-between items-center">
+                                                                        <span className="text-gray-600">Số lượng:</span>
+                                                                        <div className="flex items-center gap-3">
+                                                                           <button
+                                                                              onClick={() => {
+                                                                                 if (item.quantity > 1) {
+                                                                                    setExtras(prev => prev.map(e =>
+                                                                                       e.id === item.id ? { ...e, quantity: e.quantity - 1 } : e
+                                                                                    ));
+                                                                                 }
+                                                                              }}
+                                                                              className="w-7 h-7 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-sm"
+                                                                           >
+                                                                              −
+                                                                           </button>
+                                                                           <span className="font-bold">{item.quantity}</span>
+                                                                           <button
+                                                                              onClick={() => {
+                                                                                 setExtras(prev => prev.map(e =>
+                                                                                    e.id === item.id ? { ...e, quantity: e.quantity + 1 } : e
+                                                                                 ));
+                                                                              }}
+                                                                              className="w-7 h-7 rounded bg-[#2fd680] hover:bg-[#25a060] text-white flex items-center justify-center font-bold text-sm"
+                                                                           >
+                                                                              +
+                                                                           </button>
+                                                                        </div>
+                                                                     </div>
+                                                                     <div className="flex justify-between items-center pt-2 border-t">
+                                                                        <span className="font-semibold">Thành tiền:</span>
+                                                                        <span className="text-lg font-bold text-gray-800">
+                                                                           {formatCurrency(item.price * item.quantity)}
+                                                                        </span>
+                                                                     </div>
+                                                                  </div>
+                                                               </div>
+                                                            ))}
+                                                         </div>
+                                                      </div>
+                                                   )}
+
+                                                   {/* Food Section */}
+                                                   {filteredExtras.filter(item => item.type === 'food').length > 0 && (
+                                                      <div>
+                                                         <h5 className="font-semibold text-gray-700 mb-3">Ẩm thực</h5>
+                                                         <div className="space-y-3">
+                                                            {filteredExtras.filter(item => item.type === 'food').map((item) => (
+                                                               <div
+                                                                  key={item.id}
+                                                                  className="border rounded-lg p-4 bg-white hover:shadow-md transition-shadow relative"
+                                                               >
+                                                                  {/* Delete Button */}
+                                                                  <button
+                                                                     onClick={() => {
+                                                                        if (window.confirm(`Bạn có chắc muốn xóa "${item.title}"?`)) {
+                                                                           setExtras(prev => prev.filter(e => e.id !== item.id));
+                                                                        }
+                                                                     }}
+                                                                     className="absolute top-2 right-2 p-2 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors z-10"
+                                                                     title="Xóa"
+                                                                  >
+                                                                     <Trash2 className="w-5 h-5" />
+                                                                  </button>
+
+                                                                  {/* Header */}
+                                                                  <div className="flex justify-between items-start mb-3 pr-10">
+                                                                     <div>
+                                                                        <h3 className="font-bold text-lg">{item.title}</h3>
+                                                                     </div>
+                                                                  </div>
+
+                                                                  {/* Info */}
+                                                                  <div className="border-t pt-3 space-y-2 text-sm">
+                                                                     <div className="flex justify-between">
+                                                                        <span className="text-gray-600">Đơn giá:</span>
+                                                                        <span className="font-medium">{formatCurrency(item.price)}</span>
+                                                                     </div>
+                                                                     <div className="flex justify-between items-center">
+                                                                        <span className="text-gray-600">Số lượng:</span>
+                                                                        <div className="flex items-center gap-3">
+                                                                           <button
+                                                                              onClick={() => {
+                                                                                 if (item.quantity > 1) {
+                                                                                    setExtras(prev => prev.map(e =>
+                                                                                       e.id === item.id ? { ...e, quantity: e.quantity - 1 } : e
+                                                                                    ));
+                                                                                 }
+                                                                              }}
+                                                                              className="w-7 h-7 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-sm"
+                                                                           >
+                                                                              −
+                                                                           </button>
+                                                                           <span className="font-bold">{item.quantity}</span>
+                                                                           <button
+                                                                              onClick={() => {
+                                                                                 setExtras(prev => prev.map(e =>
+                                                                                    e.id === item.id ? { ...e, quantity: e.quantity + 1 } : e
+                                                                                 ));
+                                                                              }}
+                                                                              className="w-7 h-7 rounded bg-[#2fd680] hover:bg-[#25a060] text-white flex items-center justify-center font-bold text-sm"
+                                                                           >
+                                                                              +
+                                                                           </button>
+                                                                        </div>
+                                                                     </div>
+                                                                     <div className="flex justify-between items-center pt-2 border-t">
+                                                                        <span className="font-semibold">Thành tiền:</span>
+                                                                        <span className="text-lg font-bold text-gray-800">
+                                                                           {formatCurrency(item.price * item.quantity)}
+                                                                        </span>
+                                                                     </div>
+                                                                  </div>
+                                                               </div>
+                                                            ))}
+                                                         </div>
+                                                      </div>
+                                                   )}
+                                                </div>
+                                             );
+                                          });
+
+                                          const rendered = sections.filter(Boolean);
+                                          return rendered.length > 0 ? (
                                              <div className="border-t-2 border-[#2fd680] pt-4 mt-4">
                                                 <h4 className="font-bold text-lg text-[#2fd680] mb-4">Dịch vụ & ẩm thực đã chọn</h4>
+                                                {rendered}
                                              </div>
-
-                                             {/* Services Section */}
-                                             {extras.filter(item => item.type === 'service').length > 0 && (
-                                                <div className="mb-6">
-                                                   <h5 className="font-semibold text-gray-700 mb-3">Dịch vụ</h5>
-                                                   <div className="space-y-3">
-                                                      {extras.filter(item => item.type === 'service').map((item) => (
-                                                         <div
-                                                            key={item.id}
-                                                            className="border rounded-lg p-4 bg-white hover:shadow-md transition-shadow relative"
-                                                         >
-                                                            {/* Delete Button */}
-                                                            <button
-                                                               onClick={() => {
-                                                                  if (window.confirm(`Bạn có chắc muốn xóa "${item.title}"?`)) {
-                                                                     setExtras(prev => prev.filter(e => e.id !== item.id));
-                                                                  }
-                                                               }}
-                                                               className="absolute top-2 right-2 p-2 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors z-10"
-                                                               title="Xóa"
-                                                            >
-                                                               <Trash2 className="w-5 h-5" />
-                                                            </button>
-
-                                                            {/* Header */}
-                                                            <div className="flex justify-between items-start mb-3 pr-10">
-                                                               <div>
-                                                                  <h3 className="font-bold text-lg">{item.title}</h3>
-                                                               </div>
-                                                            </div>
-
-                                                            {/* Info */}
-                                                            <div className="border-t pt-3 space-y-2 text-sm">
-                                                               <div className="flex justify-between items-center gap-2">
-                                                                  <span className="text-gray-600 whitespace-nowrap">Áp dụng cho:</span>
-                                                                  <select
-                                                                     value={item.billId || ""}
-                                                                     onChange={(e) => {
-                                                                        const value = e.target.value;
-                                                                        setExtras(prev => prev.map(ex =>
-                                                                           ex.id === item.id ? { ...ex, billId: value } : ex
-                                                                        ));
-                                                                     }}
-                                                                     className="border rounded-md px-2 py-1 text-sm flex-1"
-                                                                  >
-                                                                     <option value="" disabled>Chọn phòng</option>
-                                                                     {bills.map(b => {
-                                                                        const id = b._id || b.billNumber;
-                                                                        return (
-                                                                           <option key={id} value={id}>{getBillDisplayLabel(b)}</option>
-                                                                        );
-                                                                     })}
-                                                                  </select>
-                                                               </div>
-                                                               <div className="flex justify-between">
-                                                                  <span className="text-gray-600">Đơn giá:</span>
-                                                                  <span className="font-medium">{formatCurrency(item.price)}</span>
-                                                               </div>
-                                                               <div className="flex justify-between items-center">
-                                                                  <span className="text-gray-600">Số lượng:</span>
-                                                                  <div className="flex items-center gap-3">
-                                                                     <button
-                                                                        onClick={() => {
-                                                                           if (item.quantity > 1) {
-                                                                              setExtras(prev => prev.map(e =>
-                                                                                 e.id === item.id ? { ...e, quantity: e.quantity - 1 } : e
-                                                                              ));
-                                                                           }
-                                                                        }}
-                                                                        className="w-7 h-7 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-sm"
-                                                                     >
-                                                                        −
-                                                                     </button>
-                                                                     <span className="font-bold">{item.quantity}</span>
-                                                                     <button
-                                                                        onClick={() => {
-                                                                           setExtras(prev => prev.map(e =>
-                                                                              e.id === item.id ? { ...e, quantity: e.quantity + 1 } : e
-                                                                           ));
-                                                                        }}
-                                                                        className="w-7 h-7 rounded bg-[#2fd680] hover:bg-[#25a060] text-white flex items-center justify-center font-bold text-sm"
-                                                                     >
-                                                                        +
-                                                                     </button>
-                                                                  </div>
-                                                               </div>
-                                                               <div className="flex justify-between items-center pt-2 border-t">
-                                                                  <span className="font-semibold">Thành tiền:</span>
-                                                                  <span className="text-lg font-bold text-gray-800">
-                                                                     {formatCurrency(item.price * item.quantity)}
-                                                                  </span>
-                                                               </div>
-                                                            </div>
-                                                         </div>
-                                                      ))}
-                                                   </div>
-                                                </div>
-                                             )}
-
-                                             {/* Food Section */}
-                                             {extras.filter(item => item.type === 'food').length > 0 && (
-                                                <div>
-                                                   <h5 className="font-semibold text-gray-700 mb-3">Ẩm thực</h5>
-                                                   <div className="space-y-3">
-                                                      {extras.filter(item => item.type === 'food').map((item) => (
-                                                         <div
-                                                            key={item.id}
-                                                            className="border rounded-lg p-4 bg-white hover:shadow-md transition-shadow relative"
-                                                         >
-                                                            {/* Delete Button */}
-                                                            <button
-                                                               onClick={() => {
-                                                                  if (window.confirm(`Bạn có chắc muốn xóa "${item.title}"?`)) {
-                                                                     setExtras(prev => prev.filter(e => e.id !== item.id));
-                                                                  }
-                                                               }}
-                                                               className="absolute top-2 right-2 p-2 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors z-10"
-                                                               title="Xóa"
-                                                            >
-                                                               <Trash2 className="w-5 h-5" />
-                                                            </button>
-
-                                                            {/* Header */}
-                                                            <div className="flex justify-between items-start mb-3 pr-10">
-                                                               <div>
-                                                                  <h3 className="font-bold text-lg">{item.title}</h3>
-                                                               </div>
-                                                            </div>
-
-                                                            {/* Info */}
-                                                            <div className="border-t pt-3 space-y-2 text-sm">
-                                                               <div className="flex justify-between items-center gap-2">
-                                                                  <span className="text-gray-600 whitespace-nowrap">Áp dụng cho:</span>
-                                                                  <select
-                                                                     value={item.billId || ""}
-                                                                     onChange={(e) => {
-                                                                        const value = e.target.value;
-                                                                        setExtras(prev => prev.map(ex =>
-                                                                           ex.id === item.id ? { ...ex, billId: value } : ex
-                                                                        ));
-                                                                     }}
-                                                                     className="border rounded-md px-2 py-1 text-sm flex-1"
-                                                                  >
-                                                                     <option value="" disabled>Chọn phòng</option>
-                                                                     {bills.map(b => {
-                                                                        const id = b._id || b.billNumber;
-                                                                        return (
-                                                                           <option key={id} value={id}>{getBillDisplayLabel(b)}</option>
-                                                                        );
-                                                                     })}
-                                                                  </select>
-                                                               </div>
-                                                               <div className="flex justify-between">
-                                                                  <span className="text-gray-600">Đơn giá:</span>
-                                                                  <span className="font-medium">{formatCurrency(item.price)}</span>
-                                                               </div>
-                                                               <div className="flex justify-between items-center">
-                                                                  <span className="text-gray-600">Số lượng:</span>
-                                                                  <div className="flex items-center gap-3">
-                                                                     <button
-                                                                        onClick={() => {
-                                                                           if (item.quantity > 1) {
-                                                                              setExtras(prev => prev.map(e =>
-                                                                                 e.id === item.id ? { ...e, quantity: e.quantity - 1 } : e
-                                                                              ));
-                                                                           }
-                                                                        }}
-                                                                        className="w-7 h-7 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-sm"
-                                                                     >
-                                                                        −
-                                                                     </button>
-                                                                     <span className="font-bold">{item.quantity}</span>
-                                                                     <button
-                                                                        onClick={() => {
-                                                                           setExtras(prev => prev.map(e =>
-                                                                              e.id === item.id ? { ...e, quantity: e.quantity + 1 } : e
-                                                                           ));
-                                                                        }}
-                                                                        className="w-7 h-7 rounded bg-[#2fd680] hover:bg-[#25a060] text-white flex items-center justify-center font-bold text-sm"
-                                                                     >
-                                                                        +
-                                                                     </button>
-                                                                  </div>
-                                                               </div>
-                                                               <div className="flex justify-between items-center pt-2 border-t">
-                                                                  <span className="font-semibold">Thành tiền:</span>
-                                                                  <span className="text-lg font-bold text-gray-800">
-                                                                     {formatCurrency(item.price * item.quantity)}
-                                                                  </span>
-                                                               </div>
-                                                            </div>
-                                                         </div>
-                                                      ))}
-                                                   </div>
-                                                </div>
-                                             )}
-                                          </>
-                                       )}
+                                          ) : null;
+                                       })()}
 
                                        {/* Total Payment and Pay Now Button */}
                                        <div className="mt-4 pt-5 border-t-2 border-[#2fd680] bg-white rounded-xl p-5 shadow-inner">

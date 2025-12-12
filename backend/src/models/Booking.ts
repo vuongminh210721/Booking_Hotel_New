@@ -3,7 +3,7 @@ import mongoose, { Schema, Document } from "mongoose";
 export interface IBooking extends Document {
   user: mongoose.Types.ObjectId;
   room?: mongoose.Types.ObjectId;
-  roomType?: string;
+  // roomType?: string;
   nightlyPrice?: number;
   fullName: string;
   email: string;
@@ -31,7 +31,7 @@ const BookingSchema: Schema = new Schema(
       ref: "Room",
       required: false,
     },
-    roomType: { type: String },
+    // roomType: { type: String },
     nightlyPrice: { type: Number },
     fullName: { type: String, required: true },
     email: { type: String, required: true },

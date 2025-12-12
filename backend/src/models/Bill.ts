@@ -12,7 +12,7 @@ export interface IBill extends Document {
   roomInfo: {
     roomId?: mongoose.Types.ObjectId;
     roomName: string;
-    roomType: string;
+    // roomType: string;
     nightlyPrice: number;
   };
   checkIn: Date;
@@ -35,7 +35,7 @@ export interface IBill extends Document {
   issuedDate: Date;
   bookingDetails?: {
     roomName: string;
-    roomType: string;
+    // roomType: string;
     nightlyPrice: number;
     nights: number;
     guests: number;
@@ -43,6 +43,14 @@ export interface IBill extends Document {
     checkOut: Date;
     specialRequests?: string;
   };
+  extras?: Array<{
+    _id?: mongoose.Types.ObjectId;
+    type?: string;
+    title?: string;
+    price?: number;
+    quantity?: number;
+    image?: string;
+  }>;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -60,8 +68,8 @@ const BillSchema: Schema = new Schema(
     },
     billNumber: {
       type: String,
-      required: true,
       unique: true,
+      sparse: true, // Allow null/undefined values and still enforce uniqueness on non-null values
     },
     customerInfo: {
       fullName: { type: String, required: true },
@@ -71,9 +79,19 @@ const BillSchema: Schema = new Schema(
     roomInfo: {
       roomId: { type: Schema.Types.ObjectId, ref: "Room" },
       roomName: { type: String, required: true },
-      roomType: { type: String, required: true },
+      // roomType: { type: String, required: true },
       nightlyPrice: { type: Number, required: true },
     },
+    // Extras (services / food) attached to this bill
+    extras: [
+      {
+        type: { type: String },
+        title: { type: String },
+        price: { type: Number },
+        quantity: { type: Number, default: 1 },
+        image: { type: String },
+      },
+    ],
     checkIn: { type: Date, required: true },
     checkOut: { type: Date, required: true },
     nights: { type: Number, required: true },
@@ -101,7 +119,7 @@ const BillSchema: Schema = new Schema(
     },
     bookingDetails: {
       roomName: { type: String },
-      roomType: { type: String },
+      // roomType: { type: String },
       nightlyPrice: { type: Number },
       nights: { type: Number },
       guests: { type: Number },
