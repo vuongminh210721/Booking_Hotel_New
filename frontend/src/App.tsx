@@ -63,6 +63,7 @@ const RouteWrapper: React.FC = () => {
           <Route path="/register" element={<Register />} />
           <Route path="/profile" element={<Profile />} />
           <Route path="/my-reviews" element={<Reviews />} />
+          {/* Payment test route removed; restoring original routes */}
         </Routes>
       </main>
       <Footer />
