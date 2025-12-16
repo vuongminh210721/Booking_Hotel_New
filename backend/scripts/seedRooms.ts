@@ -62,6 +62,7 @@ async function seedRooms() {
       discountPrice: undefined,
       availability: r.soldOut ? false : true,
       soldOut: !!r.soldOut,
+      quantity: typeof r.quantity === "number" ? r.quantity : 10, // Mặc định 10 nếu không có
       location: normalizeLocation(r.city || r.location || "Tp Hồ Chí Minh"),
       brand: defaultBrand,
     }));

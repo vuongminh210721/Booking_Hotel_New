@@ -1,7 +1,7 @@
 import mongoose, { Schema, Document } from "mongoose";
 
 export interface IBill extends Document {
-  booking: mongoose.Types.ObjectId;
+  booking?: mongoose.Types.ObjectId; // Optional - chỉ có sau khi thanh toán
   user?: mongoose.Types.ObjectId;
   billNumber: string;
   customerInfo: {
@@ -60,7 +60,7 @@ const BillSchema: Schema = new Schema(
     booking: {
       type: Schema.Types.ObjectId,
       ref: "Booking",
-      required: true,
+      required: false, // Không bắt buộc - chỉ có sau khi thanh toán
     },
     user: {
       type: Schema.Types.ObjectId,

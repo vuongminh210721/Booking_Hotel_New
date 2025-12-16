@@ -1,6 +1,7 @@
 import mongoose, { Schema, Document } from "mongoose";
 
 export interface IRoom extends Document {
+  user?: mongoose.Types.ObjectId; // User ownership
   name: string;
   type: "Deluxe" | "Suite" | "Presidential" | "Standard";
   size: string; // e.g., "32m²"
@@ -13,6 +14,7 @@ export interface IRoom extends Document {
   discountPrice?: number;
   availability: boolean;
   soldOut: boolean;
+  quantity: number; // Số lượng phòng còn lại
   location: "Hồ Chí Minh" | "Hà Nội" | "Đà Nẵng";
   brand: "express" | "hotel" | "signature";
   createdAt: Date;
@@ -21,6 +23,11 @@ export interface IRoom extends Document {
 
 const RoomSchema: Schema = new Schema(
   {
+    user: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      required: false, // Support for system/global rooms
+    },
     name: { type: String, required: true },
     type: {
       type: String,
@@ -37,6 +44,7 @@ const RoomSchema: Schema = new Schema(
     discountPrice: { type: Number, min: 0 },
     availability: { type: Boolean, default: true },
     soldOut: { type: Boolean, default: false },
+    quantity: { type: Number, default: 10, min: 0 }, // Mặc định 10 phòng
     location: {
       type: String,
       enum: ["Hồ Chí Minh", "Hà Nội", "Đà Nẵng"],

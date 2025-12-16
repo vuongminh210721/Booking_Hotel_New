@@ -7,7 +7,7 @@ import { X, User, Mail, Phone, Calendar, Users, Hotel, CheckCircle, Sparkles } f
 // API URL từ environment
 const API_BASE_URL = import.meta.env.VITE_API_URL || "/api";
 
-export default function Booking_Home() {
+export default function Select_Room() {
    const [showBooking, setShowBooking] = useState(false);
    const [fullName, setFullName] = useState("");
    const [email, setEmail] = useState("");
@@ -249,7 +249,7 @@ export default function Booking_Home() {
 
    const handleCompletePayment = async () => {
       try {
-         // Kiểm tra token trước khi gửi request (hỗ trợ cả key cũ/new)
+         // Kiểm tra token trước khi gửi request
          const token = localStorage.getItem("token");
          if (!token) {
             setStatus("error");
@@ -265,9 +265,17 @@ export default function Booking_Home() {
             ? parseFloat(roomPrice.replace(/\./g, ""))
             : 0;
 
-         // Gọi API để tạo Bill trực tiếp (không tạo Booking trước)
-         console.log("\n\n📤 ============= Bill Creation Request Sent =============");
-         console.log("📤 URL:", `${API_BASE_URL}/bills/create-direct`);
+           // Validate roomId
+           if (!roomId) {
+              setStatus("error");
+              setError("Vui lòng chọn phòng trước khi đặt.");
+              console.error("❌ No roomId found. Current state:", { roomId, roomName, roomPrice });
+              return;
+           }
+
+         // Gọi API để chọn phòng và tạo Bill
+         console.log("\n\n📤 ============= Select Room Request Sent =============");
+         console.log("📤 URL:", `${API_BASE_URL}/select-room`);
          console.log("📤 Token (first 30 chars):", token.substring(0, 30) + "...");
          console.log("📤 Body:", {
             roomId,
@@ -278,8 +286,9 @@ export default function Booking_Home() {
             checkOut,
             guests,
          });
+           console.log("📤 Current room state:", { roomId, roomName, roomPrice });
 
-         const response = await fetch(`${API_BASE_URL}/bills/create-direct`, {
+         const response = await fetch(`${API_BASE_URL}/select-room`, {
             method: "POST",
             headers: {
                "Content-Type": "application/json",
@@ -287,6 +296,7 @@ export default function Booking_Home() {
             },
             body: JSON.stringify({
                roomId: roomId || undefined,
+               roomName: roomName || undefined, // Gửi thêm roomName để backend tìm phòng
                fullName,
                email,
                phone,
@@ -318,6 +328,11 @@ export default function Booking_Home() {
             let billObj = parsed?.data || null;
 
             console.log("🔍 Extracted billObj from response:", billObj);
+              if (billObj) {
+                 console.log("🔍 Bill roomInfo:", billObj.roomInfo);
+                 console.log("🔍 Bill bookingDetails:", billObj.bookingDetails);
+                 console.log("🔍 Bill customerInfo:", billObj.customerInfo);
+              }
 
             const evtDetail = billObj ? { bill: billObj } : { raw: parsed };
 

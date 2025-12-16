@@ -13,6 +13,11 @@ export const config = {
   vietQrAccount: process.env.VIET_QR_ACCOUNT || "1234567890",
   vietQrName: process.env.VIET_QR_NAME || "HOTEL BOOKING",
   bankCode: process.env.BANK_CODE || "970407", // Vietcombank
+  // Gmail API config (for email payment verification)
+  gmailClientId: process.env.GMAIL_CLIENT_ID || "",
+  gmailClientSecret: process.env.GMAIL_CLIENT_SECRET || "",
+  gmailRefreshToken: process.env.GMAIL_REFRESH_TOKEN || "",
+  gmailEmail: process.env.GMAIL_EMAIL || "hotelhub2202@gmail.com",
 };
 
 export default config;

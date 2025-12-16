@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useInView } from "react-intersection-observer";
+import { useToast } from "../hooks/use-toast";
 
 // Định nghĩa kiểu dữ liệu 
 interface Service {
@@ -276,15 +277,80 @@ const ServiceModal = ({
 }) => {
   const [isVisible, setIsVisible] = useState(false);
   const [currentImage, setCurrentImage] = useState(service.img);
+  const [selectedRooms, setSelectedRooms] = useState<string[]>([]);
+  const [billRooms, setBillRooms] = useState<any[]>([]);
+  const [showRoomSelector, setShowRoomSelector] = useState(false);
+  const { toast } = useToast();
 
   useEffect(() => {
     setCurrentImage(service.img);
     setIsVisible(true);
+    // Load bill data to check room count
+    const cachedBills = localStorage.getItem("bills_cache");
+    if (cachedBills) {
+      try {
+        const parsed = JSON.parse(cachedBills);
+        const rooms = parsed.map((bill: any) => ({
+          // Use server _id if present, otherwise fallback to billNumber, roomId, or id
+          id: bill._id || bill.billNumber || bill.roomId || bill.id,
+          // Prefer explicit room name fields from different bill shapes
+          name:
+            (bill.roomInfo && bill.roomInfo.roomName) ||
+            (bill.bookingDetails && bill.bookingDetails.roomName) ||
+            bill.roomName ||
+            bill.billNumber ||
+            `Phòng ${bill._id || bill.roomId || bill.id}`,
+        }));
+        setBillRooms(rooms);
+        // Always show selector so user can explicitly pick target rooms.
+        setShowRoomSelector(rooms.length > 0);
+        // Default to first room selected (convenient) so single-room flows work predictably
+        setSelectedRooms(rooms.length > 0 ? [rooms[0].id] : []);
+      } catch (e) {
+        setBillRooms([]);
+      }
+    }
   }, [service.img]);
 
   const handleClose = () => {
     setIsVisible(false);
     setTimeout(onClose, 300);
+  };
+
+  const handleAddService = () => {
+    const roomsToApply = showRoomSelector ? selectedRooms : billRooms.map((r: any) => r.id as string);
+
+    if (showRoomSelector && selectedRooms.length === 0) {
+      alert("Vui lòng chọn ít nhất một phòng để áp dụng dịch vụ");
+      return;
+    }
+
+    // Dispatch event with selected rooms (log to help debugging)
+    try { console.log('🧭 Dispatching selectService with roomsToApply:', roomsToApply); } catch (err) { }
+
+    // Dispatch event with selected rooms
+    window.dispatchEvent(new CustomEvent('selectService', {
+      detail: {
+        title: service.title,
+        price: service.price,
+        img: service.img,
+        selectedRooms: roomsToApply,
+      }
+    }));
+
+    // Show success toast similar to Food page
+    try {
+      toast({
+        title: "Đặt dịch vụ thành công! 🎉",
+        description: `${service.title} đã được thêm vào hóa đơn`,
+        duration: 3000,
+      });
+    } catch (err) { /* ignore */ }
+
+    // Open bills modal so user sees the added service
+    try { window.dispatchEvent(new CustomEvent('openBills', { detail: { from: 'service', title: service.title } })); } catch (err) { }
+
+    onClose();
   };
 
   const allImages = [service.img, ...service.galleryImages];
@@ -313,59 +379,103 @@ const ServiceModal = ({
           `}
       >
 
-        <div className="flex flex-col md:flex-row">
-          {/* GALLERY ẢNH */}
-          <div className="w-full md:w-1/2 p-6 bg-gradient-to-br from-gray-50 to-gray-100">
-            <img
-              src={currentImage}
-              alt={service.title}
-              className="w-full h-72 object-cover rounded-2xl shadow-lg mb-3"
-            />
-            <div className="flex gap-3">
-              {allImages.slice(1).map((imgUrl, index) => (
+        <div className="flex flex-col">
+          <div className="md:grid md:grid-cols-12 md:gap-8 p-6 md:p-8">
+            {/* LEFT: Image + Short Description */}
+            <div className="md:col-span-6 lg:col-span-5 bg-gradient-to-br from-gray-50 to-gray-100 rounded-2xl p-4 flex flex-col">
+              <div className="w-full h-72 md:h-96 rounded-2xl overflow-hidden shadow-lg">
                 <img
-                  key={index}
-                  src={imgUrl}
-                  onClick={() => setCurrentImage(imgUrl)}
-                  alt={`${service.title} thumbnail ${index + 1}`}
-                  className={`
-                      w-1/3 h-20 object-cover rounded-xl cursor-pointer border-3 transition-all duration-300
-                      ${currentImage === imgUrl ? 'border-4 border-teal-500 shadow-lg scale-105' : 'border-transparent opacity-70 hover:opacity-100'}
-                    `}
+                  src={currentImage}
+                  alt={service.title}
+                  className="w-full h-full object-cover"
                 />
-              ))}
-            </div>
-          </div>
-
-          {/* THÔNG TIN & ĐẶT DỊCH VỤ */}
-          <div className="w-full md:w-1/2 p-8 flex flex-col bg-white">
-            <h3 className="text-3xl md:text-4xl font-bold text-gray-800 mb-4">{service.title}</h3>
-            <div className="text-2xl md:text-3xl font-semibold bg-gradient-to-r from-teal-600 to-green-600 bg-clip-text text-transparent mb-6">
-              {service.price}
-            </div>
-            {service.contactPerson && (
-              <div className="bg-gradient-to-br from-teal-50 to-green-50 p-4 rounded-2xl mb-6 border border-teal-200">
-                <h5 className="font-semibold text-gray-700 mb-1">Người phụ trách</h5>
-                <p className="text-gray-600">{service.contactPerson}</p>
               </div>
-            )}
-            <button
-              onClick={() => {
-                // Dispatch event to add service to bill
-                window.dispatchEvent(new CustomEvent('selectService', {
-                  detail: {
-                    title: service.title,
-                    price: service.price,
-                    img: service.img
-                  }
-                }));
-                // Close modal after selection
-                onClose();
-              }}
-              className="w-full bg-gradient-to-r from-teal-500 to-green-500 text-white font-bold py-4 rounded-2xl hover:from-teal-600 hover:to-green-600 transition-all duration-300 mt-auto shadow-lg hover:shadow-xl transform hover:scale-[1.02]"
-            >
-              Đặt dịch vụ
-            </button>
+
+              <div className="mt-4 text-gray-700 text-base leading-relaxed">
+                {service.desc}
+              </div>
+
+              <div className="mt-4 flex gap-3">
+                {allImages.slice(1).map((imgUrl, index) => (
+                  <img
+                    key={index}
+                    src={imgUrl}
+                    onClick={() => setCurrentImage(imgUrl)}
+                    alt={`${service.title} thumbnail ${index + 1}`}
+                    className={`
+                      w-1/4 h-20 object-cover rounded-xl cursor-pointer transition-all duration-300
+                      ${currentImage === imgUrl ? 'border-4 border-teal-500 shadow-lg scale-105' : 'opacity-80 hover:opacity-100'}
+                    `}
+                  />
+                ))}
+              </div>
+            </div>
+
+            {/* RIGHT: Title, Price, Contact & Room Selector */}
+            <div className="md:col-span-6 lg:col-span-7 p-4 flex flex-col">
+              <div>
+                <h3 className="text-3xl md:text-4xl font-bold text-gray-800 mb-2">{service.title}</h3>
+                <div className="text-2xl md:text-3xl font-semibold text-teal-600 mb-4">{service.price}</div>
+              </div>
+
+              {service.contactPerson && (
+                <div className="bg-gradient-to-br from-teal-50 to-green-50 p-4 rounded-2xl mb-6 border border-teal-200 shadow-sm">
+                  <h5 className="font-semibold text-gray-700 mb-1">Người phụ trách</h5>
+                  <p className="text-gray-600">{service.contactPerson}</p>
+                </div>
+              )}
+
+              {/* ROOM SELECTOR */}
+              {billRooms.length > 0 && (
+                <div className="bg-white p-4 rounded-2xl mb-6 border border-gray-100 shadow-sm">
+                  <div className="flex items-center justify-between mb-2">
+                    <h5 className="font-semibold text-gray-700">Chọn phòng áp dụng dịch vụ</h5>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (selectedRooms.length === billRooms.length) {
+                          setSelectedRooms([]);
+                        } else {
+                          setSelectedRooms(billRooms.map((r: any) => r.id));
+                        }
+                      }}
+                      className="text-sm text-teal-600 hover:underline"
+                      aria-label="Chọn hoặc bỏ chọn tất cả phòng"
+                    >
+                      {selectedRooms.length === billRooms.length ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
+                    </button>
+                  </div>
+
+                  <div className="text-sm text-gray-600 mb-3">Chọn 1 hoặc nhiều phòng từ danh sách hóa đơn</div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    {billRooms.map((room) => (
+                      <label key={room.id} className="flex items-center gap-2 cursor-pointer p-2 rounded-lg hover:bg-gray-50 transition-colors">
+                        <input
+                          type="checkbox"
+                          checked={selectedRooms.includes(room.id)}
+                          onChange={() => {
+                            setSelectedRooms(prev => prev.includes(room.id) ? prev.filter(id => id !== room.id) : [...prev, room.id]);
+                          }}
+                          className="w-4 h-4 rounded cursor-pointer"
+                          aria-label={`Chọn ${room.name}`}
+                        />
+                        <span className="text-sm text-gray-700">{room.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="mt-auto">
+                <button
+                  onClick={handleAddService}
+                  className="w-full bg-gradient-to-r from-teal-500 to-green-500 text-white font-bold py-4 rounded-2xl hover:from-teal-600 hover:to-green-600 transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-[1.02]"
+                >
+                  Đặt dịch vụ
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -439,7 +549,7 @@ export default function Services() {
         "https://images.unsplash.com/photo-1517677208171-0bc6725a3e60?ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxzZWFyY2h8Mnx8bGF1bmRyeXxlbnwwfHwwfHx8MA%3D%3D&auto=format&fit=crop&q=60&w=600",
         "https://cdn.pixabay.com/photo/2021/02/02/12/38/iron-5973837_1280.jpg",
       ],
-      price: "Từ 50.000 VNĐ / kg",
+      price: "Từ 30.000 VNĐ / kg",
       contactPerson: "Chị Lan - Trưởng bộ phận Buồng phòng",
       process: ["Nhận đồ tại phòng", "Phân loại & Giặt sấy", "Ủi phẳng & Gấp gọn", "Trả đồ tận phòng trong 24h"],
     },
@@ -454,7 +564,7 @@ export default function Services() {
         "https://images.unsplash.com/photo-1698223532694-2020d939dbd3?ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&q=80&w=687",
         "https://cdn.pixabay.com/photo/2018/02/14/15/50/lufthansa-regional-3153209_1280.jpg",
       ],
-      price: "1.000.000 VNĐ / lượt",
+      price: "800.000 VNĐ / lượt",
       contactPerson: "Anh Minh - Trưởng bộ phận Vận chuyển",
       process: ["Xác nhận lịch bay", "Tài xế đợi tại Cổng đến (có bảng tên)", "Di chuyển về khách sạn (30 phút)"],
     },
@@ -469,7 +579,7 @@ export default function Services() {
         "https://images.unsplash.com/photo-1662982693758-f69fcb81e7d2?ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&q=80&w=1074",
         "https://images.unsplash.com/photo-1722477936580-84aa10762b0b?ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&q=80&w=1331",
       ],
-      price: "Bao gồm trong giá phòng",
+      price: "350.000 VNĐ / người (hoặc bao gồm trong gói)",
       contactPerson: "Anh Hà - Bếp trưởng (có thể liên hệ đặt món riêng)",
       process: ["Yêu cầu xuất trình thẻ khách sạn", "Tự phục vụ thức ăn - nước uống", "Hạn chế đồ ăn thừa"],
     },
@@ -499,7 +609,7 @@ export default function Services() {
         "https://images.unsplash.com/photo-1552566626-52f8b828add9?auto=format&fit=crop&w=600&q=60",
         "https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&w=600&q=60",
       ],
-      price: "Từ 300.000 VNĐ / món",
+      price: "Từ 250.000 VNĐ / món",
       contactPerson: "Bếp trưởng David",
       process: ["Yêu cầu xuất trình thẻ khách sạn", "Bảo quản vật tư cá nhân cẩn thận"],
     },
@@ -514,7 +624,7 @@ export default function Services() {
         "https://images.unsplash.com/photo-1560932992-a93e9ca8a0c9?ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&q=80&w=687",
         "https://images.unsplash.com/photo-1540555700478-4be289fbecef?auto=format&fit=crop&w=800&q=60",
       ],
-      price: "Từ 500.000 VNĐ / liệu trình",
+      price: "Từ 800.000 VNĐ / liệu trình",
       contactPerson: "Chị Huyền - Quản lý phòng spa",
       process: ["Tư vấn trị liệu", "Xông hơi (15 phút)", "Massage trị liệu (60 phút)", "Thưởng thức trà thảo mộc"],
     },
@@ -544,7 +654,7 @@ export default function Services() {
         "https://plus.unsplash.com/premium_photo-1697968233472-72ec2a8466b5?ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&q=80&w=687",
         "https://images.unsplash.com/photo-1558981403-c5f9899a28bc?auto=format&fit=crop&w=800&q=60",
       ],
-      price: "Từ 120.000 VNĐ / ngày",
+      price: "Từ 150.000 VNĐ / ngày",
       contactPerson: "Anh Phong - Quản lý bãi đậu xe",
       process: ["Chọn loại xe", "Cung cấp CCCD/Passport và bằng lái", "Nhận xe tại sảnh"],
     },
@@ -559,7 +669,7 @@ export default function Services() {
         "https://images.unsplash.com/photo-1528127269322-539801943592?ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&q=80&w=1170",
         "https://images.unsplash.com/photo-1528181304800-259b08848526?auto=format&fit=crop&w=800&q=60",
       ],
-      price: "Từ 1.000.000 VNĐ / người",
+      price: "Từ 2.500.000 VNĐ / tour (bao gồm xe & vé vào cửa)",
       contactPerson: "Bộ phận Lễ tân",
       process: ["Chọn loại địa điểm", "Chọn hướng dẫn viên", "Hẹn ngày giờ tham gia"],
     },

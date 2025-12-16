@@ -11,6 +11,7 @@
     "description": "Phòng SINGLE HAVEN là không gian yên tĩnh và ấm cúng được thiết kế đặc biệt dành cho một người. Với diện tích 25m², phòng được bố trí hợp lý với giường Queen size êm ái cùng chăn ga gối đệm cao cấp. Ánh sáng tự nhiên tràn ngập qua khung cửa sổ lớn, tạo không gian thoáng đãng và trong lành. Góc làm việc được trang bị bàn rộng và ghế công thái học, lý tưởng cho cả làm việc và thư giãn. Phòng tắm hiện đại với vòi sen đứng mạ chrome sáng bóng, kèm theo đầy đủ tiện nghi cao cấp. Lựa chọn hoàn hảo cho những chuyến công tác hoặc kỳ nghỉ độc hành thư thái.",
     "amenities": ["Cửa sổ", "Bàn làm việc", "View thành phố", "Phòng tắm đứng"],
     "price": "850.000",
+    "quantity": 8,
     "soldOut": false,
     "images": [
       "Room_01/image_01.png",
@@ -30,6 +31,7 @@
     "description": "Phòng BALCONY DELUXE rộng 28m² là sự kết hợp hoàn hảo giữa không gian sống hiện đại và view thành phố tuyệt đẹp. Điểm nhấn đặc biệt là ban công riêng rộng rãi, nơi bạn có thể thưởng thức tách cà phê sáng, đọc sách, hay đơn giản là ngắm hoàng hôn buông xuống thành phố. Phòng được thiết kế với tông màu trung tính ấm áp, nội thất gỗ cao cấp và ánh sáng tự nhiên tràn ngập. Giường Queen size với nệm memory foam êm ái cùng bộ chăn ga gối đệm cao cấp mang đến giấc ngủ thoải mái cho hai người. Góc làm việc được bố trí khoa học với bàn gỗ solid và ghế công thái học. Phòng tắm sang trọng với thiết bị vệ sinh cao cấp và đầy đủ tiện nghi.",
     "amenities": ["Cửa sổ", "Ban công", "Bàn làm việc", "View thành phố"],
     "price": "1.200.000",
+    "quantity": 1,
     "soldOut": false,
     "availability": "Phòng cuối",
     "availabilityUnderline": true,
@@ -53,6 +55,7 @@
     "description": "STANDARD RETREAT là lựa chọn hoàn hảo cho những ai yêu thích phong cách tối giản và không gian yên bình. Căn phòng 26m² được thiết kế thông minh với tông màu ấm áp, tạo cảm giác thư thái như đang ở nhà. Nội thất trong phòng được tuyển chọn kỹ lưỡng, ưu tiên công năng và thẩm mỹ với giường Queen size êm ái, bàn làm việc bằng gỗ tự nhiên và ghế công thái học. Phòng tắm đứng hiện đại được trang bị vòi sen mưa và các thiết bị vệ sinh cao cấp. Hệ thống chiếu sáng thông minh với đèn điều chỉnh độ sáng giúp tạo không gian riêng tư theo ý muốn. Cửa sổ cách âm hai lớp đảm bảo sự yên tĩnh tuyệt đối cho những giấc ngủ ngon.",
     "amenities": ["Bàn làm việc", "Phòng tắm đứng", "Không gian tối giản"],
     "price": "1.100.000",
+    "quantity": 0,
     "soldOut": true,
     "images": [
       "Room_03/image_10.png",
@@ -77,6 +80,7 @@
       "Phòng tắm đứng"
     ],
     "price": "950.000",
+    "quantity": 0,
     "soldOut": true,
     "images": [
       "Room_04/image_14.png",
@@ -96,6 +100,7 @@
     "description": "SUPERIOR COMFORT là căn phòng 30m² được thiết kế theo phong cách hiện đại sang trọng, mang đến trải nghiệm nghỉ dưỡng đẳng cấp. Không gian phòng được phân chia khoa học với khu vực nghỉ ngơi riêng biệt, featuring giường Queen size với nệm cao cấp và bộ chăn ga 5 sao. Ghế bành êm ái được đặt cạnh cửa sổ lớn, tạo góc thư giãn hoàn hảo với view thành phố. Khu vực làm việc được trang bị bàn gỗ solid rộng rãi và ghế công thái học cao cấp. Hệ thống chiếu sáng thông minh với nhiều chế độ điều chỉnh, phù hợp mọi thời điểm trong ngày. Phòng tắm cao cấp với trang thiết bị nhập khẩu, kèm theo các amenities cao cấp và khăn bông Ai Cập mềm mại.",
     "amenities": ["Cửa sổ", "Ghế bành", "Bàn làm việc"],
     "price": "1.800.000",
+    "quantity": 3,
     "soldOut": false,
     "availability": "Còn 3 phòng cuối",
     "availabilityUnderline": true,
@@ -117,6 +122,7 @@
     "description": "DELUXE OPENVIEW là căn phòng 28m² nổi bật với thiết kế mở hiện đại. Điểm đặc biệt của phòng là hai khung cửa sổ lớn từ sàn đến trần, mang đến tầm nhìn panorama ấn tượng và đón trọn ánh sáng tự nhiên. Không gian được bài trí với nội thất tối giản cao cấp, giường Queen size với nệm orthopedic và bộ chăn ga cao cấp. Khu vực làm việc được thiết kế rộng rãi với bàn gỗ nguyên khối và ghế công thái học. Phòng tắm sang trọng với thiết bị vệ sinh cao cấp và gương toàn thân. Hệ thống rèm tự động điều khiển từ xa giúp điều chỉnh ánh sáng theo ý muốn.",
     "amenities": ["Cửa sổ lớn", "Bàn làm việc", "Không gian mở"],
     "price": "1.650.000",
+    "quantity": 0,
     "soldOut": true,
     "images": [
       "Room_06/image_22.png",
@@ -136,6 +142,7 @@
     "description": "LUXURY SUITE là không gian 24m² được thiết kế theo phong cách luxury minimalist đương đại. Điểm nhấn của phòng là giường King size đặc biệt với nệm cao cấp nhập khẩu và bộ chăn ga tơ tằm cao cấp. Hai cửa sổ lớn được trang bị rèm điện thông minh, cho phép điều chỉnh ánh sáng tự nhiên theo ý muốn. Khu vực làm việc riêng biệt với bàn gỗ nguyên khối và ghế công thái học cao cấp. Hệ thống chiếu sáng được thiết kế tinh tế với nhiều lớp ánh sáng khác nhau, tạo không gian ấm cúng. Phòng tắm sang trọng với thiết bị vệ sinh cao cấp, gương đèn LED thông minh và bộ amenities cao cấp đặc biệt.",
     "amenities": ["Cửa sổ", "Giường King", "Bàn làm việc"],
     "price": "3.800.000",
+    "quantity": 5,
     "soldOut": false,
     "availability": "Còn 5 phòng",
     "availabilityUnderline": true,
@@ -159,6 +166,7 @@
     "description": "ROYAL SUITE là căn phòng 38m² đẳng cấp mang phong cách hoàng gia hiện đại. Nội thất được chọn lọc kỹ lưỡng với tông màu vàng champagne sang trọng, kết hợp các chi tiết mạ vàng tinh tế. Giường Loose size đặc biệt với nệm cao cấp và bộ chăn ga tơ tằm thượng hạng, đáp ứng tiêu chuẩn nghỉ dưỡng cho 3 người. Ban công riêng rộng rãi được trang bị bàn trà và ghế thư giãn, nơi lý tưởng để ngắm hoàng hôn thành phố. Khu vực tiếp khách riêng biệt với sofa da cao cấp và bàn trà đá cẩm thạch. Phòng tắm sang trọng với bồn tắm độc lập, vòi sen mưa và các thiết bị vệ sinh cao cấp nhập khẩu. Dịch vụ phòng 24/7 và các đặc quyền riêng dành cho khách lưu trú ROYAL SUITE.",
     "amenities": ["Cửa sổ", "Ban công", "Phong cách hoàng gia"],
     "price": "3.500.000",
+    "quantity": 1,
     "soldOut": false,
     "availability": "Phòng cuối",
     "availabilityUnderline": true,
@@ -181,6 +189,7 @@
     "description": "FAMILY GRAND là căn phòng rộng rãi 48m² được thiết kế đặc biệt cho gia đình hoặc nhóm bạn đến 5 người. Không gian được phân chia khoa học với khu vực ngủ rộng rãi featuring giường Master size cao cấp và một giường phụ êm ái. Khu vực sinh hoạt chung được trang bị sofa lớn có thể chuyển đổi thành giường, bàn trà và kệ TV thông minh. Góc bếp mini tiện lợi với tủ lạnh, lò vi sóng và dụng cụ pha trà/cà phê. Phòng tắm gia đình rộng rãi với hai bồn rửa, vòi sen đứng và bồn tắm riêng biệt. Cửa sổ lớn mang đến ánh sáng tự nhiên và view thành phố thoáng đãng. Trang bị thêm két an toàn, tủ quần áo lớn và bàn làm việc cho cả gia đình.",
     "amenities": ["Cửa sổ", "Ghế sofa lớn", "Phù hợp cho gia đình"],
     "price": "4.200.000",
+    "quantity": 0,
     "soldOut": true,
     "images": [
       "Room_09/image_36.png",
@@ -203,6 +212,7 @@
     "description": "PENTHOUSE TRIPLE là căn hộ cao cấp 36m² nằm ở tầng cao nhất của tòa nhà, mang đến trải nghiệm nghỉ dưỡng đẳng cấp cho 3 người. Không gian được thiết kế theo phong cách contemporary luxury với tông màu trắng - xám chủ đạo. Điểm nhấn đặc biệt là ban công riêng rộng rãi với tầm nhìn 180 độ ra toàn cảnh thành phố, được trang bị bàn ăn ngoài trời và ghế thư giãn cao cấp. Giường Premium size đặc biệt với nệm cao cấp và bộ chăn ga Âu chuẩn 5 sao. Khu vực tiếp khách riêng biệt với sofa da Italian và bàn trà thiết kế. Phòng tắm sang trọng với vách kính trong suốt, bồn tắm view thành phố và các thiết bị vệ sinh cao cấp. Dịch vụ quản gia riêng và các đặc quyền VIP dành cho khách PENTHOUSE.",
     "amenities": ["Cửa sổ", "Ban công", "View toàn cảnh"],
     "price": "2.550.000",
+    "quantity": 1,
     "soldOut": false,
     "availability": "Phòng cuối",
     "availabilityUnderline": true,
@@ -225,6 +235,7 @@
     "description": "COZY NEST là căn phòng 24m² ấm cúng với thiết kế tối giản hiện đại. Phòng được bố trí thông minh với giường Queen size êm ái, góc làm việc riêng biệt và khu vực thư giãn nhỏ gọn. Ánh sáng tự nhiên từ cửa sổ lớn tạo không gian thoáng đãng. Phòng tắm hiện đại với đầy đủ tiện nghi. Phù hợp cho khách công tác hoặc du lịch một mình.",
     "amenities": ["Cửa sổ", "Bàn làm việc", "Phòng tắm đứng"],
     "price": "980.000",
+    "quantity": 4,
     "soldOut": false,
     "availability": "Còn 4 phòng",
     "availabilityUnderline": true,
@@ -247,6 +258,7 @@
     "description": "URBAN ESCAPE là phòng 32m² với view biển tuyệt đẹp. Không gian rộng rãi với giường King size cao cấp, khu vực sinh hoạt riêng biệt và ban công lớn. Thiết kế hiện đại kết hợp với màu sắc ấm áp tạo cảm giác thư giãn. Phòng tắm sang trọng với bồn tắm và vòi sen riêng biệt. Lựa chọn hoàn hảo cho các cặp đôi.",
     "amenities": ["View biển", "Ban công", "Bồn tắm", "Bàn làm việc"],
     "price": "1.750.000",
+    "quantity": 2,
     "soldOut": false,
     "availability": "Còn 2 phòng",
     "availabilityUnderline": true,
@@ -273,6 +285,7 @@
       "Máy pha cà phê"
     ],
     "price": "2.200.000",
+    "quantity": 3,
     "soldOut": false,
     "availability": "Còn 3 phòng",
     "availabilityUnderline": true,
@@ -296,6 +309,7 @@
     "description": "GARDEN VIEW là phòng 29m² với tầm nhìn ra khu vườn xanh mát. Thiết kế gần gũi với thiên nhiên, nội thất gỗ tự nhiên và tông màu xanh nhẹ nhàng. Giường Queen size êm ái, ban công riêng để thưởng thức không khí trong lành. Phòng tắm hiện đại với thiết bị cao cấp. Không gian lý tưởng cho những ai yêu thích sự yên tĩnh.",
     "amenities": ["View vườn", "Ban công", "Bàn làm việc", "Phòng tắm"],
     "price": "1.450.000",
+    "quantity": 1,
     "soldOut": false,
     "availability": "Phòng cuối",
     "availabilityUnderline": true,
@@ -322,6 +336,7 @@
       "Phòng khách riêng"
     ],
     "price": "3.200.000",
+    "quantity": 2,
     "soldOut": false,
     "availability": "Còn 2 phòng",
     "images": [
@@ -343,6 +358,7 @@
     "description": "MINIMALIST ZEN là phòng 26m² theo phong cách Nhật Bản tối giản. Không gian yên tĩnh với màu sắc trung tính, nội thất gỗ tự nhiên và ánh sáng dịu nhẹ. Giường Queen size thấp kiểu Nhật, góc thiền nhỏ để thư giãn. Phòng tắm phong cách onsen với bồn tắm sâu. Không gian hoàn hảo cho meditation và nghỉ ngơi.",
     "amenities": ["Góc thiền", "Bồn tắm Nhật", "Không gian zen", "Bộ pha trà"],
     "price": "1.500.000",
+    "quantity": 3,
     "soldOut": false,
     "availability": "Còn 3 phòng",
     "availabilityUnderline": true,
@@ -364,6 +380,7 @@
     "description": "FAMILY COMFORT là phòng 45m² dành riêng cho gia đình. Hai giường Queen size trong phòng ngủ rộng rãi, khu vực sinh hoạt chung với TV lớn và sofa. Góc bếp mini với tủ lạnh, lò vi sóng. Phòng tắm gia đình với hai bồn rửa mặt. Tủ quần áo lớn và két an toàn. Phù hợp cho gia đình có trẻ em.",
     "amenities": ["Thân thiện gia đình", "Góc bếp mini", "TV lớn", "Sofa"],
     "price": "2.800.000",
+    "quantity": 2,
     "soldOut": false,
     "availability": "Còn 2 phòng",
     "availabilityUnderline": true,
@@ -390,6 +407,7 @@
       "Minibar"
     ],
     "price": "2.950.000",
+    "quantity": 1,
     "soldOut": false,
     "availability": "Phòng cuối",
     "availabilityUnderline": true,
@@ -418,6 +436,7 @@
       "WiFi tốc độ cao"
     ],
     "price": "1.550.000",
+    "quantity": 5,
     "soldOut": false,
     "availability": "Còn 5 phòng",
     "images": [
@@ -445,6 +464,7 @@
       "Sauna"
     ],
     "price": "8.500.000",
+    "quantity": 1,
     "soldOut": false,
     "availability": "Phòng duy nhất",
     "availabilityUnderline": true,
@@ -466,6 +486,7 @@
     "description": "MODERN SPACE là phòng 28m² mang phong cách hiện đại, nằm tại khu vực Cầu Giấy – trung tâm mới của Hà Nội. Không gian studio tối ưu với giường Queen size, bàn làm việc thoải mái và cửa sổ lớn nhìn ra thành phố. Khu bếp nhỏ được trang bị bếp điện, lò vi sóng và các dụng cụ nấu cơ bản. Phòng tắm kính hiện đại, phù hợp cho khách lưu trú ngắn hạn hoặc dài ngày.",
     "amenities": ["Bếp nhỏ", "Bàn làm việc", "Cửa sổ lớn", "WiFi tốc độ cao"],
     "price": "1.250.000",
+    "quantity": 3,
     "soldOut": false,
     "availability": "Còn 3 phòng",
     "images": [
@@ -491,6 +512,7 @@
       "WiFi tốc độ cao"
     ],
     "price": "1.850.000",
+    "quantity": 4,
     "soldOut": false,
     "availability": "Còn 4 phòng",
     "images": [

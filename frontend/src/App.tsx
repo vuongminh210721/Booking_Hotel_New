@@ -9,7 +9,7 @@ import Home from "./pages/Home";
 import RoomSystem from "./pages/Room_System";
 import Services from "./pages/Service";
 import Food from "./pages/Food";
-import Locations from "./pages/Promotion";
+import Promotion from "./pages/Promotion";
 import Contact from "./pages/Contact";
 import Header from "./components/Header";
 import Footer from "./components/Footer";
@@ -22,7 +22,7 @@ import FAQ from "./pages/FAQ";
 import MorePolicy from "./pages/More_Policy";
 import MemberPrivilege from "./pages/Member_Privilege";
 import View_Home from "./components/View_Home";
-import Booking_Home from "./components/Booking_Home";
+import Select_Room from "./components/Select_Room";
 import Login from "./components/Login";
 import Register from "./components/Register";
 import Profile from "./pages/Profile";
@@ -38,8 +38,8 @@ const RouteWrapper: React.FC = () => {
   return (
     <div className="flex flex-col min-h-screen">
       <Header />
-      {/* Mount booking modal globally so it can listen for openBooking events */}
-      <Booking_Home />
+      {/* Mount room selection modal globally so it can listen for openBooking events */}
+      <Select_Room />
       {/* Floating Bills Button */}
       <FloatingBills />
       <main className={`flex-1 ${isHome ? "" : "pt-16"}`}>
@@ -50,7 +50,7 @@ const RouteWrapper: React.FC = () => {
           <Route path="/rooms/:id" element={<View_Home />} />
           <Route path="/services" element={<Services />} />
           <Route path="/food" element={<Food />} />
-          <Route path="/locations" element={<Locations />} />
+          <Route path="/promotion" element={<Promotion />} />
           <Route path="/contact" element={<Contact />} />
           <Route path="/privacy-policy" element={<PrivacyPolicy />} />
           <Route path="/check-in-policy" element={<CheckInPolicy />} />
@@ -58,12 +58,11 @@ const RouteWrapper: React.FC = () => {
           <Route path="/faq" element={<FAQ />} />
           <Route path="/more-policy" element={<MorePolicy />} />
           <Route path="/member-privilege" element={<MemberPrivilege />} />
-          <Route path="/booking" element={<Booking_Home />} />
+          <Route path="/booking" element={<Select_Room />} />
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
           <Route path="/profile" element={<Profile />} />
           <Route path="/my-reviews" element={<Reviews />} />
-          {/* Payment test route removed; restoring original routes */}
         </Routes>
       </main>
       <Footer />

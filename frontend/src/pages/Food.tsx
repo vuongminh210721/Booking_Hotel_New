@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useInView } from "react-intersection-observer";
+import { useToast } from "../hooks/use-toast";
 
 // 1. ĐỊNH NGHĨA CÁC KIỂU DỮ LIỆU
 interface Dish {
@@ -141,8 +142,9 @@ const CategorySection = ({
 
 
 // Component 3: DishCard 
-const DishCard = ({ dish }: { dish: Dish }) => {
+const DishCard = ({ dish, onClose, selectedRooms: parentSelectedRooms }: { dish: Dish; onClose?: () => void; selectedRooms?: string[] }) => {
   const [currentImgIndex, setCurrentImgIndex] = useState(0);
+  const { toast } = useToast();
 
   useEffect(() => {
     if (dish.images.length <= 1) return;
@@ -190,20 +192,66 @@ const DishCard = ({ dish }: { dish: Dish }) => {
             try {
               const raw = localStorage.getItem('queued_extras');
               const arr = raw ? JSON.parse(raw) : [];
-              arr.push({ title: dish.title, price: dish.price, img: dish.images[0], source: 'food', ts: Date.now() });
+
+              // Use parent selected rooms when provided, otherwise derive from cached bills
+              let selectedRooms: string[] = [];
+              if (parentSelectedRooms && Array.isArray(parentSelectedRooms)) {
+                selectedRooms = parentSelectedRooms;
+              } else {
+                const cachedBills = localStorage.getItem("bills_cache");
+                if (cachedBills) {
+                  try {
+                    const parsed = JSON.parse(cachedBills);
+                    const billRooms = parsed.map((bill: any) => bill.roomId || bill.id);
+                    // If more than 2 rooms, mark for room selection in Floating_Bill
+                    if (billRooms.length > 2) {
+                      selectedRooms = [];
+                    } else {
+                      selectedRooms = billRooms;
+                    }
+                  } catch (e) {
+                    // ignore
+                  }
+                }
+              }
+
+              arr.push({
+                title: dish.title,
+                price: dish.price,
+                img: dish.images[0],
+                source: 'food',
+                ts: Date.now(),
+                selectedRooms: selectedRooms.length > 0 ? selectedRooms : undefined,
+                needsRoomSelection: selectedRooms.length === 0
+              });
               localStorage.setItem('queued_extras', JSON.stringify(arr));
             } catch (err) {
               // ignore
             }
 
             // Dispatch event to add the ordered dish as food in the bill (if Floating_Bill is mounted)
+            const selectedRoomsToSend = parentSelectedRooms && Array.isArray(parentSelectedRooms) ? parentSelectedRooms : undefined;
+            try { console.log('🧭 Dispatching selectFood with selectedRooms:', selectedRoomsToSend); } catch (err) { }
             window.dispatchEvent(new CustomEvent('selectFood', {
               detail: {
                 title: dish.title,
                 price: dish.price,
-                images: dish.images // Use images array
+                images: dish.images, // Use images array
+                selectedRooms: selectedRoomsToSend,
               }
             }));
+
+            // Show success toast notification
+            toast({
+              title: "Đặt món thành công! 🎉",
+              description: `${dish.title} đã được thêm vào hóa đơn`,
+              duration: 3000,
+            });
+
+            // Close modal so toast notification is visible
+            if (onClose) {
+              onClose();
+            }
 
             // Also open the bills modal (if mounted)
             window.dispatchEvent(new CustomEvent('openBills', { detail: { from: 'food', title: dish.title } }));
@@ -229,8 +277,30 @@ const CategoryModal = ({
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const searchRef = useRef<HTMLDivElement>(null);
 
+  // Room selector states
+  const [billRooms, setBillRooms] = useState<any[]>([]);
+  const [selectedRooms, setSelectedRooms] = useState<string[]>([]);
+  const [showRoomSelector, setShowRoomSelector] = useState(false);
+
   useEffect(() => {
     setIsVisible(true);
+
+    // Load bills from cache to build room selector
+    const cachedBills = localStorage.getItem('bills_cache');
+    if (cachedBills) {
+      try {
+        const parsed = JSON.parse(cachedBills);
+        const rooms = parsed.map((bill: any) => ({
+          id: bill._id || bill.billNumber || bill.roomId || bill.id,
+          name: (bill.roomInfo && bill.roomInfo.roomName) || (bill.bookingDetails && bill.bookingDetails.roomName) || bill.roomName || bill.billNumber || `Phòng ${bill._id || bill.roomId || bill.id}`,
+        }));
+        setBillRooms(rooms);
+        setShowRoomSelector(rooms.length > 0);
+        setSelectedRooms(rooms.length > 0 ? [rooms[0].id] : []);
+      } catch (e) {
+        // ignore
+      }
+    }
   }, []);
 
   const handleClose = () => {
@@ -287,6 +357,41 @@ const CategoryModal = ({
         <h2 className="text-3xl font-bold text-gray-800 p-6 border-b">
           {category.title}
         </h2>
+
+        {/* ROOM SELECTOR (optional) */}
+        {showRoomSelector && (
+          <div className="px-6 pt-4">
+            <div className="mb-4 p-3 bg-white rounded-xl border-2 border-[#2fd680]">
+              <div className="flex items-center justify-between mb-2">
+                <h5 className="font-semibold text-gray-700">Chọn phòng áp dụng món ăn</h5>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (selectedRooms.length === billRooms.length) setSelectedRooms([]);
+                    else setSelectedRooms(billRooms.map(r => r.id));
+                  }}
+                  className="text-sm text-blue-600 underline"
+                >
+                  {selectedRooms.length === billRooms.length ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
+                </button>
+              </div>
+              <div className="text-sm text-gray-600 mb-3">Chọn 1 hoặc nhiều phòng từ danh sách hóa đơn</div>
+              <div className="grid grid-cols-2 gap-2">
+                {billRooms.map((room) => (
+                  <label key={room.id} className="flex items-center gap-2 cursor-pointer p-2 rounded-lg hover:bg-blue-100 transition-colors">
+                    <input
+                      type="checkbox"
+                      checked={selectedRooms.includes(room.id)}
+                      onChange={() => setSelectedRooms(prev => prev.includes(room.id) ? prev.filter(id => id !== room.id) : [...prev, room.id])}
+                      className="w-4 h-4 rounded cursor-pointer"
+                    />
+                    <span className="text-sm text-gray-700">{room.name}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* DROPDOWN LIST */}
         <div className="px-6 pt-4" ref={searchRef}>
@@ -355,7 +460,7 @@ const CategoryModal = ({
                 id={`dish-${dish.title.replace(/\s+/g, '-')}`}
                 className="transition-all duration-300"
               >
-                <DishCard dish={dish} />
+                <DishCard dish={dish} onClose={handleClose} selectedRooms={selectedRooms} />
               </div>
             ))}
           </div>

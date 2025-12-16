@@ -25,7 +25,7 @@ interface AuthResponse {
 }
 
 // Local storage keys
-const TOKEN_KEY = "auth_token";
+const TOKEN_KEY = "token";
 const USER_KEY = "auth_user";
 
 export const authService = {
@@ -50,11 +50,11 @@ export const authService = {
   clearAuth() {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
-    // Clear bill-related caches on logout to prevent data from previous session,
-    // but keep extras_cache so services/food persist across login/logout per user request
+    // Clear bill-related caches on logout to prevent data from previous session
     localStorage.removeItem("bills_cache");
     localStorage.removeItem("last_bill");
-    // Keep extras_cache by NOT removing it here
+    localStorage.removeItem("deleted_bills");
+    // Keep extras_cache by NOT removing it here (services/food persist across login/logout)
     // localStorage.removeItem("extras_cache");
   },
 
@@ -88,21 +88,29 @@ export const authService = {
 
   // Login
   async login(email: string, password: string): Promise<AuthResponse> {
-    const response = await fetch(`${API_BASE_URL}/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
-    });
+    try {
+      const response = await fetch(`${API_BASE_URL}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
 
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.message || "Login failed");
+      if (!response.ok) {
+        const error = await response.json();
+        console.error("Login error response:", error);
+        throw new Error(error.message || error.error || "Login failed");
+      }
+
+      const result: AuthResponse = await response.json();
+      // Lưu token và user vào localStorage
+      this.saveAuth(result.data.token, result.data.user);
+      return result;
+    } catch (error) {
+      if (error instanceof Error) {
+        throw error;
+      }
+      throw new Error("Login failed");
     }
-
-    const result: AuthResponse = await response.json();
-    // Lưu token và user vào localStorage
-    this.saveAuth(result.data.token, result.data.user);
-    return result;
   },
 
   // Upload avatar

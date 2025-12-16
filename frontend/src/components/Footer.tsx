@@ -67,7 +67,7 @@ export default function Footer() {
                 <span className="text-base font-bold text-[#2fd680]">
                   Hotline
                 </span>
-                <span className="text-xl font-bold leading-5">0396256658</span>
+                <span className="text-xl font-bold leading-5">0931673949</span>
               </div>
             </div>
 
@@ -86,7 +86,7 @@ export default function Footer() {
                   Email
                 </span>
                 <span className="text-xl font-bold leading-5">
-                  trongluffy22@gmail.com
+                  hotelhub2202@gmail.com
                 </span>
               </div>
             </div>

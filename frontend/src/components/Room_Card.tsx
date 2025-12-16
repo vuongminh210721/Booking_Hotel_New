@@ -99,7 +99,6 @@ export default function RoomCard({
   description,
   amenities,
   price,
-  availability,
   soldOut,
   images,
 }: RoomCardProps) {
@@ -145,12 +144,12 @@ export default function RoomCard({
               </div>
             )}
           </div>
-          {!soldOut && availability && (
+          {/* Availability badge: always show a generic "Còn phòng" when not sold out */}
+          {!soldOut ? (
             <span className="px-4 py-1.5 bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 text-green-700 text-xs font-semibold rounded-full shadow-sm">
-              {availability}
+              Còn phòng
             </span>
-          )}
-          {soldOut && (
+          ) : (
             <span className="px-4 py-1.5 bg-red-50 border border-red-200 text-red-600 text-xs font-bold rounded-full">
               Hết phòng
             </span>

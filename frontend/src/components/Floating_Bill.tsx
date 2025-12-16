@@ -4,6 +4,7 @@ import { useAuth } from "@/context/AuthContext";
 import { billService } from "@/services/billService";
 import qrPaymentImage from "@/assets/Screenshot 2025-12-10 235114.png";
 import { rooms } from "@/data/room";
+import { usePaymentVerification } from "@/hooks/use-payment-verification";
 
 // QR Code image from assets
 const QR_CODE_IMAGE = qrPaymentImage;
@@ -64,18 +65,130 @@ const FloatingBills = () => {
    const [extras, setExtras] = useState<ExtraItem[]>([]);
    const [recentlyAdded, setRecentlyAdded] = useState<Record<string, boolean>>({});
    const [selectedBillForExtras, setSelectedBillForExtras] = useState<string>(''); // Bill ID cho dịch vụ/ẩm thực
+
+   // Voucher states
+   const [voucherCode, setVoucherCode] = useState<string>('');
+   const [appliedVoucher, setAppliedVoucher] = useState<{
+      voucherId: string;
+      voucherCode: string;
+      promotionTitle: string;
+      discountAmount: number;
+      discountDescription: string;
+   } | null>(null);
+   const [voucherError, setVoucherError] = useState<string>('');
+   const [voucherLoading, setVoucherLoading] = useState(false);
+
    const { user } = useAuth();
    const API_BASE_URL = import.meta.env.VITE_API_URL || "/api";
 
+   // Email verification integration
+   // Use a safe access pattern so runtime errors can't occur if the hook returns unexpectedly
+   const __paymentVerification = usePaymentVerification();
+   const emailVerifying = __paymentVerification?.isChecking ?? false;
+   const emailSuccess = __paymentVerification?.success ?? null;
+   const emailMessage = __paymentVerification?.message ?? '';
+
+   const startVerification = __paymentVerification?.startVerification ?? (async () => false);
+   const resetEmailVerification = __paymentVerification?.reset ?? (() => { });
+
+   // Dispatch event when payment succeeds
+   useEffect(() => {
+      if (emailSuccess === true) {
+         console.log("🎉 Payment successful, dispatching paymentSuccess event");
+
+         // Đánh dấu voucher đã sử dụng nếu có
+         if (appliedVoucher?.voucherId) {
+            const markVoucherUsed = async () => {
+               try {
+                  const token = localStorage.getItem('token');
+                  if (token) {
+                     await fetch(`${API_BASE_URL}/promotions/vouchers/use`, {
+                        method: 'POST',
+                        headers: {
+                           'Authorization': `Bearer ${token}`,
+                           'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ voucherId: appliedVoucher.voucherId }),
+                     });
+                     console.log("✅ Voucher marked as used:", appliedVoucher.voucherCode);
+                  }
+               } catch (err) {
+                  console.error("❌ Failed to mark voucher as used:", err);
+               }
+            };
+            markVoucherUsed();
+         }
+
+         window.dispatchEvent(new CustomEvent('paymentSuccess', {
+            detail: {
+               timestamp: Date.now(),
+               message: emailMessage
+            }
+         }));
+         // Tự động đóng modal sau 2 giây khi thanh toán thành công
+         setTimeout(() => {
+            setIsOpen(false);
+            setActiveTab('bills');
+            setSelectedGroup(null);
+            setAppliedVoucher(null); // Reset voucher sau khi thanh toán
+            resetEmailVerification();
+         }, 2000);
+      } else if (emailSuccess === false) {
+         // Tự động đóng modal sau 3 giây khi thanh toán thất bại
+         setTimeout(() => {
+            setIsOpen(false);
+            setActiveTab('bills');
+            setSelectedGroup(null);
+            resetEmailVerification();
+         }, 3000);
+      }
+   }, [emailSuccess, emailMessage, appliedVoucher, API_BASE_URL]);
+
    const getExtrasKey = (u?: any) => {
-      try { const id = u?._id || u?.id; return id ? `extras_cache_${id}` : 'extras_cache'; } catch { return 'extras_cache'; }
+      try { const id = u?._id || u?.id; return id ? `extras_cache_${id}` : null; } catch { return null; }
    };
 
    const getCachedExtras = (u?: any) => {
       const key = getExtrasKey(u);
-      const raw = localStorage.getItem(key) || localStorage.getItem('extras_cache');
+      if (!key) return null; // Không có user thì không lấy cache
+      const raw = localStorage.getItem(key);
       return raw ? JSON.parse(raw) : null;
    };
+
+   // Helper functions for queued_extras - per user
+   const getQueuedExtrasKey = (u?: any) => {
+      try { const id = u?._id || u?.id; return id ? `queued_extras_${id}` : null; } catch { return null; }
+   };
+
+   const getQueuedExtras = (): any[] => {
+      const key = getQueuedExtrasKey(user);
+      if (!key) return [];
+      try {
+         const raw = localStorage.getItem(key);
+         return raw ? JSON.parse(raw) : [];
+      } catch { return []; }
+   };
+
+   const setQueuedExtras = (items: any[]) => {
+      const key = getQueuedExtrasKey(user);
+      if (!key) return;
+      try {
+         if (items.length > 0) {
+            localStorage.setItem(key, JSON.stringify(items));
+         } else {
+            localStorage.removeItem(key);
+         }
+      } catch (err) {
+         console.warn('Could not save queued_extras:', err);
+      }
+   };
+
+   const clearQueuedExtras = () => {
+      const key = getQueuedExtrasKey(user);
+      if (!key) return;
+      try { localStorage.removeItem(key); } catch { }
+   };
+
    const contentRef = useRef<HTMLDivElement>(null);
 
    // Hydrate from last cached bill and extras in case network fetch is slow/empty
@@ -143,18 +256,19 @@ const FloatingBills = () => {
       }
    }, [bills]);
 
-   // Save extras to localStorage whenever they change
+   // Save extras to localStorage whenever they change (per-user only)
    useEffect(() => {
       try {
          const key = getExtrasKey(user);
+         if (!key) {
+            console.log("⚠️ No user logged in, not saving extras to localStorage");
+            return;
+         }
          if (extras.length > 0) {
             localStorage.setItem(key, JSON.stringify(extras));
-            // also maintain generic fallback for backwards compatibility
-            try { localStorage.setItem('extras_cache', JSON.stringify(extras)); } catch {}
             console.log("💾 Saved", extras.length, "extras to localStorage", key);
          } else {
             localStorage.removeItem(key);
-            try { localStorage.removeItem('extras_cache'); } catch {}
             console.log("🗑️ Cleared extras cache from localStorage", key);
          }
       } catch (err) {
@@ -165,7 +279,7 @@ const FloatingBills = () => {
    const fetchBills = useCallback(async () => {
       setLoading(true);
       try {
-         const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+         const token = localStorage.getItem("token");
          console.log("🔑 Token found:", token ? "Yes" : "No");
          if (!token) {
             setBills([]);
@@ -178,7 +292,7 @@ const FloatingBills = () => {
          console.log("🔄 Fetching bills from:", url, "with token:", token.substring(0, 20) + "...");
          const response = await fetch(url, {
             headers: {
-               Authorization: `Bearer ${token}`,
+               Authorization: token ? `Bearer ${token}` : undefined as any,
                "Cache-Control": "no-cache",
             },
          });
@@ -264,45 +378,52 @@ const FloatingBills = () => {
          // Extract extras from bills if they contain extras array
          let serverExtras: ExtraItem[] = [];
          billsData.forEach((bill: any) => {
-            if (Array.isArray(bill.extras)) {
+            if (Array.isArray(bill.extras) && bill.extras.length > 0) {
+               console.log(`📦 Bill ${bill.billNumber} has ${bill.extras.length} extras`);
                bill.extras.forEach((extra: any) => {
-                  serverExtras.push({
+                  const extraItem: ExtraItem = {
                      id: (extra._id || extra.id) ? (extra._id || extra.id).toString() : `${bill._id}-${extra.title}`,
                      type: extra.type || 'service',
                      title: extra.title,
                      price: Number(extra.price || 0),
                      quantity: Number(extra.quantity || 1),
                      image: extra.image,
-                     billId: bill._id || bill.billNumber,
-                  });
+                     billId: bill._id, // MUST use _id (MongoDB ObjectId), not billNumber
+                  };
+                  serverExtras.push(extraItem);
+                  console.log(`  ✅ Extracted extra: ${extra.title} (${extra.type})`);
                });
             }
          });
 
-         // Merge server extras with any cached extras (avoid duplicate items)
-         try {
-            const cached = getCachedExtras(user) || [];
-            const merged = [...serverExtras];
-            const key = (e: ExtraItem) => `${e.billId}::${e.title}::${e.price}::${e.quantity}`;
-            const present = new Set(merged.map(key));
-            (cached as ExtraItem[]).forEach(c => {
-               if (!present.has(key(c))) {
-                  merged.push(c);
-               }
-            });
-            if (merged.length > 0) {
-               setExtras(merged);
-               try { localStorage.setItem(getExtrasKey(user), JSON.stringify(merged)); } catch {}
-               try { localStorage.setItem('extras_cache', JSON.stringify(merged)); } catch {}
-            }
-         } catch (err) {
-            // fallback: set to serverExtras only
+         console.log(`📦 Total extras from server: ${serverExtras.length}`);
+
+         // Merge strategy: Server extras are source of truth
+         setExtras(prevExtras => {
             if (serverExtras.length > 0) {
-               setExtras(serverExtras);
-               try { localStorage.setItem(getExtrasKey(user), JSON.stringify(serverExtras)); } catch {}
-               try { localStorage.setItem('extras_cache', JSON.stringify(serverExtras)); } catch {}
+               // Server has extras - this is the authoritative source
+               console.log("🔄 Server has", serverExtras.length, "extras - using as primary source");
+
+               // Always use server extras as they're the single source of truth
+               const merged = [...serverExtras];
+
+               // Update localStorage cache with server data
+               const extrasKey = getExtrasKey(user);
+               if (extrasKey) {
+                  try {
+                     localStorage.setItem(extrasKey, JSON.stringify(merged));
+                     console.log("💾 Updated localStorage cache with server extras");
+                  } catch { }
+               }
+
+               return merged;
+            } else {
+               // No server extras - could be empty bill or race condition
+               // Preserve current local extras since they might be pending save
+               console.log("📦 Server returned no extras. Preserving", prevExtras.length, "local extras");
+               return prevExtras;
             }
-         }
+         });
 
          // Set bills from server (already filtered by deleted_bills)
          // This ensures server data is authoritative but respects local deletions
@@ -327,6 +448,21 @@ const FloatingBills = () => {
          setLoading(false);
       }
    }, [API_BASE_URL]);
+
+   // Fetch bills from server when component mounts (fetch fresh data after fetchBills is defined)
+   useEffect(() => {
+      const token = localStorage.getItem("token");
+      if (token && user) {
+         console.log("🔄 Component mounted with auth, fetching fresh bills from server...");
+         // Give a brief delay to ensure state is initialized with cached data
+         const timer = setTimeout(() => {
+            // Fetch bills from server to get fresh data + extras
+            // This will merge with any locally cached extras
+            fetchBills();
+         }, 500);
+         return () => clearTimeout(timer);
+      }
+   }, [user, fetchBills]);
 
    useEffect(() => {
       if (isOpen && user) {
@@ -669,60 +805,137 @@ const FloatingBills = () => {
          }
          if (service && service.title && service.price) {
             const priceValue = parseInt(service.price.replace(/[^\d]/g, '')) || 0;
-            // Resolve target billId: prefer selectedBillForExtras, then current group's first bill, then global first bill
+            // Resolve target bill(s): prefer explicit selection from Service page (selectedRooms), otherwise fall back to one target
             const resolveTargetBillId = (): string => {
-               if (selectedBillForExtras) return selectedBillForExtras;
+               if (selectedBillForExtras && !selectedBillForExtras.startsWith('BILL-')) return selectedBillForExtras;
                if (selectedGroup && Array.isArray(selectedGroup.bills) && selectedGroup.bills.length > 0) {
                   const first = selectedGroup.bills[0];
-                  return (first._id || first.billNumber || '');
+                  if (first._id) return first._id;
                }
                const firstGlobal = bills[0];
-               return (firstGlobal?._id || firstGlobal?.billNumber || '');
+               return firstGlobal?._id || '';
             };
-            const targetBillId = resolveTargetBillId();
-            const newItem: ExtraItem = {
-               id: `service-${Date.now()}-${Math.random()}`,
-               type: 'service',
-               title: service.title,
-               price: priceValue,
-               quantity: 1,
-               image: service.img,
-               billId: targetBillId,
-            };
-            // If user is authenticated and we have a billId, persist to server
-            const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
-            if (token && targetBillId) {
+
+            const selectedRooms: string[] = Array.isArray(service.selectedRooms) && service.selectedRooms.length > 0 ? service.selectedRooms : [resolveTargetBillId()];
+            // Map incoming selected room identifiers to canonical bill _id when possible
+            const targetIds = selectedRooms
+               .map(s => {
+                  // Prefer matching by _id, then billNumber, then roomId
+                  const matched = bills.find(b => (b._id && b._id === s) || (b.billNumber && b.billNumber === s) || (b.roomInfo && (b.roomInfo as any).roomId === s));
+                  if (matched) return (matched._id || matched.billNumber);
+                  return s;
+               })
+               .filter(Boolean);
+
+            if (targetIds.length === 0) {
+               alert("Không tìm thấy hóa đơn để thêm dịch vụ. Vui lòng đặt phòng trước.");
+               return;
+            }
+
+            // Debug: warn if selectedRooms included ids that mapped to multiple bills or unmapped ids
+            try {
+               const unmapped = selectedRooms.filter((s, i) => targetIds[i] !== s);
+               if (unmapped.length > 0) console.log('⚠️ Service selectedRooms mapped to bill ids:', { selectedRooms, targetIds, unmapped });
+            } catch (err) { /* ignore */ }
+
+            // If user is authenticated, persist each selected room to server and apply returned server extras for each bill
+            const token = localStorage.getItem("token");
+            if (token) {
                try {
-                  await billService.addExtra(targetBillId, {
-                     type: newItem.type,
-                     title: newItem.title,
-                     price: newItem.price,
-                     quantity: newItem.quantity,
-                     image: newItem.image,
-                  });
-                  // Refresh bills from server to pick up the new extra
+                  for (const targetBillId of targetIds) {
+                     if (!targetBillId) continue;
+
+                     // find existing for this bill
+                     const existingForBill = extras.find(item => item.title === service.title && item.type === 'service' && item.billId === targetBillId);
+
+                     let serverBill: any = null;
+                     if (existingForBill) {
+                        serverBill = await billService.updateExtra(targetBillId, existingForBill.id, { quantity: existingForBill.quantity + 1 });
+                        console.log('✅ Updated service quantity on server (multi-room):', targetBillId, serverBill);
+                     } else {
+                        serverBill = await billService.addExtra(targetBillId, {
+                           type: 'service',
+                           title: service.title,
+                           price: priceValue,
+                           quantity: 1,
+                           image: service.img,
+                        });
+                        console.log('✅ Added new service to database (multi-room):', targetBillId, serverBill);
+                     }
+
+                     try {
+                        if (serverBill && serverBill._id) {
+                           const serverExtrasForBill: ExtraItem[] = (serverBill.extras || []).map((extra: any) => ({
+                              id: (extra._id || extra.id) ? (extra._id || extra.id).toString() : `${serverBill._id}-${extra.title}`,
+                              type: extra.type || 'service',
+                              title: extra.title,
+                              price: Number(extra.price || 0),
+                              quantity: Number(extra.quantity || 1),
+                              image: extra.image,
+                              billId: serverBill._id,
+                           }));
+
+                           setExtras(prev => {
+                              const others = prev.filter(e => e.billId !== serverBill._id);
+                              const merged = [...others, ...serverExtrasForBill];
+                              const extrasKey = getExtrasKey(user);
+                              if (extrasKey) {
+                                 try { localStorage.setItem(extrasKey, JSON.stringify(merged)); } catch { }
+                              }
+                              return merged;
+                           });
+                        }
+                     } catch (err) {
+                        console.warn('Could not apply server extras to state for bill', targetBillId, err);
+                     }
+                  }
+
+                  // After processing all, sync full list once
                   fetchBills();
                   setIsOpen(true);
                   setActiveTab('bills');
                   setHasNewBill(true);
                   return;
                } catch (err) {
-                  console.warn("Could not persist extra to server, falling back to local cache:", err);
+                  console.error('❌ Error adding services to selected rooms:', err);
+                  alert('Lỗi: Không thể lưu dịch vụ lên server. ' + (err instanceof Error ? err.message : String(err)));
+                  return;
                }
             }
 
+            // Fallback: local-only add for each selected bill (multi-target)
             setExtras(prev => {
-               // Check billId to ensure we only update the extra for the correct room
-               const existing = prev.find(item => item.title === service.title && item.type === 'service' && item.billId === targetBillId);
-               if (existing) {
-                  return prev.map(item =>
-                     item.title === service.title && item.type === 'service' && item.billId === targetBillId
-                        ? { ...item, quantity: item.quantity + 1 }
-                        : item
-                  );
+               const next = [...prev];
+               for (const bid of targetIds) {
+                  try {
+                     const existing = next.find(item => item.title === service.title && item.type === 'service' && item.billId === bid);
+                     if (existing) {
+                        existing.quantity = existing.quantity + 1;
+                     } else {
+                        next.push({
+                           id: `service-${Date.now()}-${Math.random()}`,
+                           type: 'service',
+                           title: service.title,
+                           price: priceValue,
+                           quantity: 1,
+                           image: service.img,
+                           billId: bid,
+                        } as ExtraItem);
+                     }
+                  } catch (err) {
+                     // ignore per-item parse errors
+                  }
                }
-               return [...prev, newItem];
+               return next;
             });
+
+            try {
+               setRecentlyAdded(prev => ({ ...prev, [service.title]: true }));
+               setTimeout(() => setRecentlyAdded(prev => { const next = { ...prev }; delete next[service.title]; return next; }), 1800);
+            } catch (err) {
+               // ignore
+            }
+
             setIsOpen(true);
             setActiveTab('bills');  // Stay on bills tab
             setHasNewBill(true);
@@ -738,60 +951,128 @@ const FloatingBills = () => {
          }
          if (food && food.title && food.price) {
             const priceValue = parseInt(food.price.replace(/[^\d]/g, '')) || 0;
-            // Resolve target billId: prefer selectedBillForExtras, then current group's first bill, then global first bill
+            // Resolve target billId: MUST use _id (MongoDB ObjectId), not billNumber
             const resolveTargetBillId = (): string => {
-               if (selectedBillForExtras) return selectedBillForExtras;
+               // Priority: selectedBillForExtras (if it's a valid _id, not billNumber)
+               if (selectedBillForExtras && !selectedBillForExtras.startsWith('BILL-')) {
+                  return selectedBillForExtras;
+               }
+               // Then check selectedGroup
                if (selectedGroup && Array.isArray(selectedGroup.bills) && selectedGroup.bills.length > 0) {
                   const first = selectedGroup.bills[0];
-                  return (first._id || first.billNumber || '');
+                  if (first._id) return first._id;
                }
+               // Finally, use first global bill's _id
                const firstGlobal = bills[0];
-               return (firstGlobal?._id || firstGlobal?.billNumber || '');
+               return firstGlobal?._id || '';
             };
-            const targetBillId = resolveTargetBillId();
-            const newItem: ExtraItem = {
-               id: `food-${Date.now()}-${Math.random()}`,
-               type: 'food',
-               title: food.title,
-               price: priceValue,
-               quantity: 1,
-               image: food.images?.[0] || food.img,
-               billId: targetBillId,
-            };
-            const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
-            if (token && targetBillId) {
+            // Support multi-room add: prefer explicit selection from Food page (selectedRooms), otherwise fall back to one target
+            const selectedRooms: string[] = Array.isArray(food.selectedRooms) && food.selectedRooms.length > 0 ? food.selectedRooms : [resolveTargetBillId()];
+            const targetIds = selectedRooms
+               .map(s => {
+                  const matched = bills.find(b => (b._id && b._id === s) || (b.billNumber && b.billNumber === s) || (b.roomInfo && (b.roomInfo as any).roomId === s));
+                  if (matched) return (matched._id || matched.billNumber);
+                  return s;
+               })
+               .filter(Boolean);
+
+            if (targetIds.length === 0) {
+               alert("Không tìm thấy hóa đơn để thêm ẩm thực. Vui lòng đặt phòng trước.");
+               return;
+            }
+
+            // If user is authenticated, persist each selected room to server and apply returned server extras for each bill
+            const token = localStorage.getItem("token");
+            if (token) {
                try {
-                  await billService.addExtra(targetBillId, {
-                     type: newItem.type,
-                     title: newItem.title,
-                     price: newItem.price,
-                     quantity: newItem.quantity,
-                     image: newItem.image,
-                  });
+                  for (const targetBillId of targetIds) {
+                     if (!targetBillId) continue;
+
+                     const existingForBill = extras.find(item => item.title === food.title && item.type === 'food' && item.billId === targetBillId);
+
+                     let serverBill: any = null;
+                     if (existingForBill) {
+                        serverBill = await billService.updateExtra(targetBillId, existingForBill.id, { quantity: existingForBill.quantity + 1 });
+                        console.log('✅ Updated food quantity on server (multi-room):', targetBillId, serverBill);
+                     } else {
+                        serverBill = await billService.addExtra(targetBillId, {
+                           type: 'food',
+                           title: food.title,
+                           price: priceValue,
+                           quantity: 1,
+                           image: food.images?.[0] || food.img,
+                        });
+                        console.log('✅ Added new food to database (multi-room):', targetBillId, serverBill);
+                     }
+
+                     try {
+                        if (serverBill && serverBill._id) {
+                           const serverExtrasForBill: ExtraItem[] = (serverBill.extras || []).map((extra: any) => ({
+                              id: (extra._id || extra.id) ? (extra._id || extra.id).toString() : `${serverBill._id}-${extra.title}`,
+                              type: extra.type || 'food',
+                              title: extra.title,
+                              price: Number(extra.price || 0),
+                              quantity: Number(extra.quantity || 1),
+                              image: extra.image,
+                              billId: serverBill._id,
+                           }));
+
+                           setExtras(prev => {
+                              const others = prev.filter(e => e.billId !== serverBill._id);
+                              const merged = [...others, ...serverExtrasForBill];
+                              const extrasKey = getExtrasKey(user);
+                              if (extrasKey) {
+                                 try { localStorage.setItem(extrasKey, JSON.stringify(merged)); } catch { }
+                              }
+                              return merged;
+                           });
+                        }
+                     } catch (err) {
+                        console.warn('Could not apply server extras to state for bill', targetBillId, err);
+                     }
+                  }
+
+                  // After processing all, sync full list once
                   fetchBills();
                   setIsOpen(true);
                   setActiveTab('bills');
                   setHasNewBill(true);
                   return;
                } catch (err) {
-                  console.warn("Could not persist food extra to server, falling back to local cache:", err);
+                  console.error('❌ Error adding foods to selected rooms:', err);
+                  alert('Lỗi: Không thể lưu ẩm thực lên server. ' + (err instanceof Error ? err.message : String(err)));
+                  return;
                }
             }
 
+            // Fallback: local-only add for each selected bill (multi-target)
             setExtras(prev => {
-               // Check billId to ensure we only update the extra for the correct room
-               const existing = prev.find(item => item.title === food.title && item.type === 'food' && item.billId === targetBillId);
-               if (existing) {
-                  return prev.map(item =>
-                     item.title === food.title && item.type === 'food' && item.billId === targetBillId
-                        ? { ...item, quantity: item.quantity + 1 }
-                        : item
-                  );
+               const next = [...prev];
+               for (const bid of targetIds) {
+                  try {
+                     const existing = next.find(item => item.title === food.title && item.type === 'food' && item.billId === bid);
+                     if (existing) {
+                        existing.quantity = existing.quantity + 1;
+                     } else {
+                        next.push({
+                           id: `food-${Date.now()}-${Math.random()}`,
+                           type: 'food',
+                           title: food.title,
+                           price: priceValue,
+                           quantity: 1,
+                           image: food.images?.[0] || food.img,
+                           billId: bid,
+                        } as ExtraItem);
+                     }
+                  } catch (err) {
+                     // ignore per-item parse errors
+                  }
                }
-               return [...prev, newItem];
+               return next;
             });
+
             setIsOpen(true);
-            setActiveTab('bills');  // Stay on bills tab instead of switching to extras
+            setActiveTab('bills');
             setHasNewBill(true);
          }
       };
@@ -808,9 +1089,7 @@ const FloatingBills = () => {
    // On mount, consume any queued extras saved by other pages (e.g., Food page)
    useEffect(() => {
       try {
-         const raw = localStorage.getItem('queued_extras');
-         if (!raw) return;
-         const queued: Array<any> = JSON.parse(raw);
+         const queued = getQueuedExtras();
          if (!Array.isArray(queued) || queued.length === 0) return;
 
          // Add each queued item as a service (mirror handleServiceSelect behaviour)
@@ -853,7 +1132,7 @@ const FloatingBills = () => {
          });
 
          // Clear the queue after consuming
-         localStorage.removeItem('queued_extras');
+         clearQueuedExtras();
 
          // Open modal and switch to bills tab to show the added extras
          setIsOpen(true);
@@ -862,7 +1141,86 @@ const FloatingBills = () => {
       } catch (err) {
          // ignore
       }
-   }, []);
+   }, [user]);
+
+   // When a payment succeeds from other flows (e.g., email verification), save the most recent paid bill
+   // as `last_bill` (cleared extras) and remove it from the current bills list so it can be restored on next login.
+   useEffect(() => {
+      const handler = (_ev: any) => {
+         try {
+            console.log('📌 paymentSuccess event received - saving cleared snapshot of recent bill');
+
+            // Determine candidate ids: prefer selectedGroup, else the first bill
+            let idsToSave: string[] = [];
+            if (selectedGroup && Array.isArray(selectedGroup.bills) && selectedGroup.bills.length > 0) {
+               idsToSave = selectedGroup.bills.map((b: any) => b._id || b.billNumber).filter(Boolean);
+            } else if (bills.length > 0) {
+               idsToSave = [(bills[0]._id || bills[0].billNumber)];
+            }
+
+            if (idsToSave.length === 0) return;
+
+            const idsSet = new Set(idsToSave);
+            const candidates = bills.filter(b => idsSet.has(b._id) || idsSet.has(b.billNumber));
+            const candidate = candidates[candidates.length - 1] || bills.find(b => idsSet.has(b._id) || idsSet.has(b.billNumber)) || bills[0];
+
+            if (candidate) {
+               const saved = { ...candidate, extras: [], savedAt: Date.now() };
+               try { const uid = user ? ((user as any)._id || (user as any).id) : null; const lastBillKey = uid ? `last_bill_${uid}` : 'last_bill'; localStorage.setItem(lastBillKey, JSON.stringify(saved)); } catch (err) { console.warn('Could not write last_bill to localStorage', err); }
+               console.log('💾 Saved last paid bill to localStorage (event):', saved._id || saved.billNumber);
+            }
+
+            // Remove these bills locally (same semantics as polling path)
+            setBills(prev => prev.filter(b => !idsSet.has(b._id) && !idsSet.has(b.billNumber)));
+
+            // Mark deleted
+            try {
+               const rawDeleted = localStorage.getItem('deleted_bills');
+               const deletedList: string[] = rawDeleted ? JSON.parse(rawDeleted) : [];
+               const newDeletedList = [...deletedList, ...idsToSave];
+               localStorage.setItem('deleted_bills', JSON.stringify(newDeletedList));
+            } catch (err) { /* ignore */ }
+
+            // Clear queued_extras and local extras
+            try { clearQueuedExtras(); } catch (err) { /* ignore */ }
+            setExtras([]);
+
+         } catch (err) {
+            console.warn('Error processing paymentSuccess event:', err);
+         }
+      };
+
+      window.addEventListener('paymentSuccess', handler);
+      return () => window.removeEventListener('paymentSuccess', handler);
+   }, [bills, selectedGroup]);
+
+
+   // Restore the most recent saved bill when the user logs in
+   useEffect(() => {
+      if (!user) return;
+      try {
+         const uid = (user as any) ? ((user as any)._id || (user as any).id) : null;
+         const lastKey = uid ? `last_bill_${uid}` : 'last_bill';
+         const lastRaw = localStorage.getItem(lastKey);
+         if (!lastRaw) return;
+         const last = JSON.parse(lastRaw);
+         if (!last) return;
+         const id = last._id || last.billNumber;
+         if (!id) return;
+
+         const rawDeleted = localStorage.getItem('deleted_bills');
+         const deletedList: string[] = rawDeleted ? JSON.parse(rawDeleted) : [];
+         if (deletedList.includes(id)) return; // don't restore if explicitly deleted
+
+         const exists = bills.some(b => (b._id || b.billNumber) === id);
+         if (!exists) {
+            setBills(prev => [last, ...prev]);
+            console.log('↩️ Restored last saved bill into bills after login:', id);
+         }
+      } catch (err) {
+         console.warn('Could not restore last_bill on login', err);
+      }
+   }, [user]);
 
    const formatDate = (dateString: string) => {
       return new Date(dateString).toLocaleDateString("vi-VN", {
@@ -877,6 +1235,69 @@ const FloatingBills = () => {
          style: "currency",
          currency: "VND",
       }).format(amount);
+   };
+
+   // Hàm áp dụng voucher
+   const handleApplyVoucher = async (totalAmount: number) => {
+      if (!voucherCode.trim()) {
+         setVoucherError('Vui lòng nhập mã voucher');
+         return;
+      }
+
+      setVoucherLoading(true);
+      setVoucherError('');
+
+      try {
+         const token = localStorage.getItem('token');
+         if (!token) {
+            setVoucherError('Vui lòng đăng nhập để sử dụng voucher');
+            setVoucherLoading(false);
+            return;
+         }
+
+         const response = await fetch(`${API_BASE_URL}/promotions/vouchers/apply`, {
+            method: 'POST',
+            headers: {
+               'Authorization': `Bearer ${token}`,
+               'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+               voucherCode: voucherCode.trim().toUpperCase(),
+               totalAmount,
+            }),
+         });
+
+         const data = await response.json();
+
+         if (!response.ok) {
+            setVoucherError(data.message || 'Không thể áp dụng voucher');
+            setVoucherLoading(false);
+            return;
+         }
+
+         // Áp dụng thành công
+         setAppliedVoucher({
+            voucherId: data.data.voucherId,
+            voucherCode: data.data.voucherCode,
+            promotionTitle: data.data.promotionTitle,
+            discountAmount: data.data.discountAmount,
+            discountDescription: data.data.discountDescription,
+         });
+         setVoucherCode('');
+         setVoucherError('');
+      } catch (err) {
+         console.error('Error applying voucher:', err);
+         setVoucherError('Đã xảy ra lỗi khi áp dụng voucher');
+      } finally {
+         setVoucherLoading(false);
+      }
+   };
+
+   // Hàm xóa voucher đã áp dụng
+   const handleRemoveVoucher = () => {
+      setAppliedVoucher(null);
+      setVoucherCode('');
+      setVoucherError('');
    };
 
    // Display name for a bill (prefer room name, fallback to bill number)
@@ -961,7 +1382,7 @@ const FloatingBills = () => {
    const [paymentPollingActive, setPaymentPollingActive] = useState(false);
    const [paymentSuccess, setPaymentSuccess] = useState(false);
    const [paymentMessage, setPaymentMessage] = useState<string | null>(null);
-   const [countdownSeconds, setCountdownSeconds] = useState(300); // 5 minutes
+   const [countdownSeconds, setCountdownSeconds] = useState(120); // 2 minutes
    const [qrData, setQrData] = useState<any>(null);
 
    const getStatusColor = (status: string) => {
@@ -1013,7 +1434,7 @@ const FloatingBills = () => {
       let interval: any = null;
       let isCancelled = false;
 
-      const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+      const token = localStorage.getItem("token");
       if (!token) return;
 
       const getBillIdsToPoll = () => {
@@ -1064,6 +1485,49 @@ const FloatingBills = () => {
                setPaymentMessage('✅ Thanh toán thành công');
                setPaymentPollingActive(false);
 
+               // Save last paid bill (most recent) to localStorage (clear extras) so it can be restored on login
+               try {
+                  const idsSetTemp = new Set(ids);
+                  const paidBillsTemp = bills.filter(b => idsSetTemp.has(b._id) || idsSetTemp.has(b.billNumber));
+                  if (paidBillsTemp && paidBillsTemp.length > 0) {
+                     const lastIdTemp = ids[ids.length - 1];
+                     let candidateTemp = paidBillsTemp.find(pb => pb._id === lastIdTemp || pb.billNumber === lastIdTemp) || paidBillsTemp[paidBillsTemp.length - 1];
+                     if (candidateTemp) {
+                        const savedTemp = { ...candidateTemp, extras: [], savedAt: Date.now() };
+                        const uidTemp = user ? ((user as any)._id || (user as any).id) : null;
+                        const lastBillKeyTemp = uidTemp ? `last_bill_${uidTemp}` : 'last_bill';
+                        localStorage.setItem(lastBillKeyTemp, JSON.stringify(savedTemp));
+                        console.log('💾 Saved last paid bill to localStorage:', savedTemp._id || savedTemp.billNumber);
+                     }
+                  }
+               } catch (err) {
+                  console.warn('Could not save last paid bill to localStorage', err);
+               }
+
+               // Tạo Booking từ các Bill đã thanh toán
+               try {
+                  const token = localStorage.getItem("token");
+                  for (const billId of ids) {
+                     try {
+                        const response = await fetch(`${API_BASE_URL}/bills/${billId}/convert-to-booking`, {
+                           method: "POST",
+                           headers: {
+                              Authorization: `Bearer ${token}`,
+                           },
+                        });
+                        if (response.ok) {
+                           console.log(`✅ Created booking for bill ${billId}`);
+                        } else {
+                           console.warn(`⚠️ Could not create booking for bill ${billId}`);
+                        }
+                     } catch (err) {
+                        console.warn(`⚠️ Error creating booking for bill ${billId}:`, err);
+                     }
+                  }
+               } catch (err) {
+                  console.warn('Error converting bills to bookings:', err);
+               }
+
                // Remove paid bills from state
                const idsSet = new Set(ids);
                setBills(prev => prev.filter(b => !idsSet.has(b._id) && !idsSet.has(b.billNumber)));
@@ -1076,6 +1540,13 @@ const FloatingBills = () => {
                   localStorage.setItem('deleted_bills', JSON.stringify(newDeletedList));
                } catch (err) {
                   console.warn('Could not update deleted_bills', err);
+               }
+
+               // Clear queued_extras after successful payment
+               try {
+                  clearQueuedExtras();
+               } catch (err) {
+                  console.warn('Could not clear queued_extras', err);
                }
 
                setTimeout(() => fetchBills(), 300);
@@ -1121,7 +1592,7 @@ const FloatingBills = () => {
             setCountdownSeconds(prev => {
                const newVal = prev - 1;
                if (newVal <= 0) {
-                  setPaymentMessage('❌ Hết thời gian thanh toán (5 phút)');
+                  setPaymentMessage('❌ Hết thời gian thanh toán (2 phút)');
                   setPaymentPollingActive(false);
                }
                return newVal;
@@ -1137,7 +1608,7 @@ const FloatingBills = () => {
    // Load QR code image from assets when entering payment tab
    useEffect(() => {
       if (isOpen && activeTab === 'payment') {
-         setCountdownSeconds(300); // Reset countdown
+         setCountdownSeconds(120); // Reset countdown
          setQrData(QR_CODE_IMAGE); // Use static image from assets
          setPaymentPollingActive(true);
       } else {
@@ -1256,7 +1727,7 @@ const FloatingBills = () => {
                                  <Receipt className="w-16 h-16 mx-auto text-gray-300 mb-4" />
                                  <h3 className="text-xl font-semibold mb-2">Chưa có hóa đơn</h3>
                                  <p className="text-gray-600">
-                                    {(localStorage.getItem("auth_token") || localStorage.getItem("token"))
+                                    {localStorage.getItem("token")
                                        ? "Bạn chưa đặt phòng nào. Hãy đặt phòng ngay để nhận hóa đơn!"
                                        : "Bạn chưa đăng nhập. Vui lòng đăng nhập để xem hóa đơn."}
                                  </p>
@@ -1294,7 +1765,7 @@ const FloatingBills = () => {
                                                    const billId = bill._id || bill.billNumber;
 
                                                    try {
-                                                      const token = localStorage.getItem('auth_token') || localStorage.getItem('token');
+                                                      const token = localStorage.getItem('token');
                                                       if (!token) {
                                                          alert('Vui lòng đăng nhập lại');
                                                          return;
@@ -1335,9 +1806,11 @@ const FloatingBills = () => {
                                                          setSelectedGroup(null);
                                                          try {
                                                             localStorage.removeItem('last_bill');
-                                                            // remove both user-keyed and generic extras cache
-                                                            try { localStorage.removeItem(getExtrasKey(user)); } catch {}
-                                                            try { localStorage.removeItem('extras_cache'); } catch {}
+                                                            // remove user-keyed extras cache
+                                                            const extrasKey = getExtrasKey(user);
+                                                            if (extrasKey) {
+                                                               try { localStorage.removeItem(extrasKey); } catch { }
+                                                            }
                                                             localStorage.removeItem('bills_cache');
                                                          } catch (err) {
                                                             // ignore
@@ -1491,7 +1964,7 @@ const FloatingBills = () => {
                                                                   <p className="text-sm text-gray-600">{service.price}</p>
                                                                </div>
                                                                <button
-                                                                  onClick={() => {
+                                                                  onClick={async () => {
                                                                      const targetBillId = resolveGroupBillId();
                                                                      const priceValue = parseInt(service.price.replace(/[^\d]/g, '')) || 0;
                                                                      const newItem: ExtraItem = {
@@ -1503,6 +1976,67 @@ const FloatingBills = () => {
                                                                         image: service.img,
                                                                         billId: targetBillId,
                                                                      };
+
+                                                                     const token = localStorage.getItem('token');
+                                                                     if (token && targetBillId) {
+                                                                        try {
+                                                                           const existingServer = extras.find(item => item.title === service.title && item.type === 'service' && item.billId === targetBillId && /^[0-9a-fA-F]{24}$/.test(item.id));
+                                                                           let serverBill: any = null;
+                                                                           if (existingServer) {
+                                                                              serverBill = await billService.updateExtra(targetBillId, existingServer.id, { quantity: existingServer.quantity + 1 });
+                                                                              console.log('✅ Updated service quantity on server (in-bill add):', serverBill);
+                                                                           } else {
+                                                                              serverBill = await billService.addExtra(targetBillId, {
+                                                                                 type: newItem.type,
+                                                                                 title: newItem.title,
+                                                                                 price: newItem.price,
+                                                                                 quantity: newItem.quantity,
+                                                                                 image: newItem.image,
+                                                                              });
+                                                                              console.log('✅ Added new service to database (in-bill add):', serverBill);
+                                                                           }
+
+                                                                           // Apply server extras for this bill into local state/cache immediately
+                                                                           try {
+                                                                              if (serverBill && serverBill._id) {
+                                                                                 const serverExtrasForBill: ExtraItem[] = (serverBill.extras || []).map((extra: any) => ({
+                                                                                    id: (extra._id || extra.id) ? (extra._id || extra.id).toString() : `${serverBill._id}-${extra.title}`,
+                                                                                    type: extra.type || 'service',
+                                                                                    title: extra.title,
+                                                                                    price: Number(extra.price || 0),
+                                                                                    quantity: Number(extra.quantity || 1),
+                                                                                    image: extra.image,
+                                                                                    billId: serverBill._id,
+                                                                                 }));
+
+                                                                                 setExtras(prev => {
+                                                                                    const others = prev.filter(e => e.billId !== serverBill._id);
+                                                                                    const merged = [...others, ...serverExtrasForBill];
+                                                                                    const extrasKey = getExtrasKey(user);
+                                                                                    if (extrasKey) {
+                                                                                       try { localStorage.setItem(extrasKey, JSON.stringify(merged)); } catch { }
+                                                                                    }
+                                                                                    return merged;
+                                                                                 });
+                                                                              }
+                                                                           } catch (err) {
+                                                                              console.warn('Could not apply server extras to state', err);
+                                                                           }
+
+                                                                           // Sync full list
+                                                                           fetchBills();
+                                                                           setIsOpen(true);
+                                                                           setActiveTab('bills');
+                                                                           setHasNewBill(true);
+                                                                           return;
+                                                                        } catch (err) {
+                                                                           console.error('❌ In-bill add service failed to save to server:', err);
+                                                                           alert('Lỗi: Không thể lưu dịch vụ lên server. ' + (err instanceof Error ? err.message : String(err)));
+                                                                           return;
+                                                                        }
+                                                                     }
+
+                                                                     // Fallback: local-only add (not logged in)
                                                                      setExtras(prev => {
                                                                         const existing = prev.find(item => item.title === service.title && item.type === 'service' && item.billId === targetBillId);
                                                                         if (existing) {
@@ -1563,7 +2097,7 @@ const FloatingBills = () => {
                                                                   <p className="text-sm text-gray-600">{food.price}</p>
                                                                </div>
                                                                <button
-                                                                  onClick={() => {
+                                                                  onClick={async () => {
                                                                      const targetBillId = resolveGroupBillId();
                                                                      const priceValue = parseInt(food.price.replace(/[^\d]/g, '')) || 0;
                                                                      const newItem: ExtraItem = {
@@ -1575,9 +2109,70 @@ const FloatingBills = () => {
                                                                         image: food.img,
                                                                         billId: targetBillId,
                                                                      };
+
+                                                                     const token = localStorage.getItem('token');
+                                                                     if (token && targetBillId) {
+                                                                        try {
+                                                                           const existingServer = extras.find(item => item.title === food.title && item.type === 'food' && item.billId === targetBillId && /^[0-9a-fA-F]{24}$/.test(item.id));
+                                                                           let serverBill: any = null;
+                                                                           if (existingServer) {
+                                                                              serverBill = await billService.updateExtra(targetBillId, existingServer.id, { quantity: existingServer.quantity + 1 });
+                                                                              console.log('✅ Updated food quantity on server (in-bill add):', serverBill);
+                                                                           } else {
+                                                                              serverBill = await billService.addExtra(targetBillId, {
+                                                                                 type: newItem.type,
+                                                                                 title: newItem.title,
+                                                                                 price: newItem.price,
+                                                                                 quantity: newItem.quantity,
+                                                                                 image: newItem.image,
+                                                                              });
+                                                                              console.log('✅ Added new food to database (in-bill add):', serverBill);
+                                                                           }
+
+                                                                           // Apply server extras for this bill into local state/cache immediately
+                                                                           try {
+                                                                              if (serverBill && serverBill._id) {
+                                                                                 const serverExtrasForBill: ExtraItem[] = (serverBill.extras || []).map((extra: any) => ({
+                                                                                    id: (extra._id || extra.id) ? (extra._id || extra.id).toString() : `${serverBill._id}-${extra.title}`,
+                                                                                    type: extra.type || 'food',
+                                                                                    title: extra.title,
+                                                                                    price: Number(extra.price || 0),
+                                                                                    quantity: Number(extra.quantity || 1),
+                                                                                    image: extra.image,
+                                                                                    billId: serverBill._id,
+                                                                                 }));
+
+                                                                                 setExtras(prev => {
+                                                                                    const others = prev.filter(e => e.billId !== serverBill._id);
+                                                                                    const merged = [...others, ...serverExtrasForBill];
+                                                                                    const extrasKey = getExtrasKey(user);
+                                                                                    if (extrasKey) {
+                                                                                       try { localStorage.setItem(extrasKey, JSON.stringify(merged)); } catch { }
+                                                                                    }
+                                                                                    return merged;
+                                                                                 });
+                                                                              }
+                                                                           } catch (err) {
+                                                                              console.warn('Could not apply server extras to state', err);
+                                                                           }
+
+                                                                           // Sync full list
+                                                                           fetchBills();
+                                                                           setIsOpen(true);
+                                                                           setActiveTab('bills');
+                                                                           setHasNewBill(true);
+                                                                           return;
+                                                                        } catch (err) {
+                                                                           console.error('❌ In-bill add food failed to save to server:', err);
+                                                                           alert('Lỗi: Không thể lưu ẩm thực lên server. ' + (err instanceof Error ? err.message : String(err)));
+                                                                           return;
+                                                                        }
+                                                                     }
+
+                                                                     // Fallback: local-only add (not logged in)
                                                                      setExtras(prev => {
-                                                                        const existing = prev.find(item => item.title === food.title && item.type === 'food' && item.billId === targetBillId);
-                                                                        if (existing) {
+                                                                        const exist = prev.find(item => item.title === food.title && item.type === 'food' && item.billId === targetBillId);
+                                                                        if (exist) {
                                                                            return prev.map(item =>
                                                                               item.title === food.title && item.type === 'food' && item.billId === targetBillId
                                                                                  ? { ...item, quantity: item.quantity + 1 }
@@ -1632,9 +2227,46 @@ const FloatingBills = () => {
                                                                >
                                                                   {/* Delete Button */}
                                                                   <button
-                                                                     onClick={() => {
+                                                                     onClick={async () => {
                                                                         if (window.confirm(`Bạn có chắc muốn xóa "${item.title}"?`)) {
+                                                                           try {
+                                                                              // Remove from server
+                                                                              const token = localStorage.getItem('token');
+                                                                              if (token && item.billId) {
+                                                                                 const response = await fetch(
+                                                                                    `${API_BASE_URL}/bills/${item.billId}/extras/${item.id}`,
+                                                                                    {
+                                                                                       method: 'DELETE',
+                                                                                       headers: {
+                                                                                          'Authorization': `Bearer ${token}`,
+                                                                                          'Content-Type': 'application/json',
+                                                                                       },
+                                                                                    }
+                                                                                 );
+                                                                                 if (!response.ok) {
+                                                                                    console.warn('Could not delete extra from server');
+                                                                                 } else {
+                                                                                    // Refresh bills after successful deletion
+                                                                                    fetchBills();
+                                                                                 }
+                                                                              }
+                                                                           } catch (err) {
+                                                                              console.warn('Error deleting extra:', err);
+                                                                           }
+
+                                                                           // Remove from local state
                                                                            setExtras(prev => prev.filter(e => e.id !== item.id));
+
+                                                                           // Also remove from queued_extras to prevent re-adding on reload (per-user)
+                                                                           try {
+                                                                              const queued = getQueuedExtras();
+                                                                              if (queued.length > 0) {
+                                                                                 const filtered = queued.filter((q: any) => !(q.id === item.id && q.billId === item.billId));
+                                                                                 setQueuedExtras(filtered);
+                                                                              }
+                                                                           } catch (err) {
+                                                                              // ignore
+                                                                           }
                                                                         }
                                                                      }}
                                                                      className="absolute top-2 right-2 p-2 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors z-10"
@@ -1709,9 +2341,46 @@ const FloatingBills = () => {
                                                                >
                                                                   {/* Delete Button */}
                                                                   <button
-                                                                     onClick={() => {
+                                                                     onClick={async () => {
                                                                         if (window.confirm(`Bạn có chắc muốn xóa "${item.title}"?`)) {
+                                                                           try {
+                                                                              // Remove from server
+                                                                              const token = localStorage.getItem('token');
+                                                                              if (token && item.billId) {
+                                                                                 const response = await fetch(
+                                                                                    `${API_BASE_URL}/bills/${item.billId}/extras/${item.id}`,
+                                                                                    {
+                                                                                       method: 'DELETE',
+                                                                                       headers: {
+                                                                                          'Authorization': `Bearer ${token}`,
+                                                                                          'Content-Type': 'application/json',
+                                                                                       },
+                                                                                    }
+                                                                                 );
+                                                                                 if (!response.ok) {
+                                                                                    console.warn('Could not delete extra from server');
+                                                                                 } else {
+                                                                                    // Refresh bills after successful deletion
+                                                                                    fetchBills();
+                                                                                 }
+                                                                              }
+                                                                           } catch (err) {
+                                                                              console.warn('Error deleting extra:', err);
+                                                                           }
+
+                                                                           // Remove from local state
                                                                            setExtras(prev => prev.filter(e => e.id !== item.id));
+
+                                                                           // Also remove from queued_extras to prevent re-adding on reload (per-user)
+                                                                           try {
+                                                                              const queued = getQueuedExtras();
+                                                                              if (queued.length > 0) {
+                                                                                 const filtered = queued.filter((q: any) => !(q.id === item.id && q.billId === item.billId));
+                                                                                 setQueuedExtras(filtered);
+                                                                              }
+                                                                           } catch (err) {
+                                                                              // ignore
+                                                                           }
                                                                         }
                                                                      }}
                                                                      className="absolute top-2 right-2 p-2 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors z-10"
@@ -1791,6 +2460,8 @@ const FloatingBills = () => {
                                           {(() => {
                                              const extrasTotal = extras.reduce((sum, item) => sum + (item.price * item.quantity), 0);
                                              const grandTotal = group.totalAmount + extrasTotal;
+                                             const discountAmount = appliedVoucher?.discountAmount || 0;
+                                             const finalTotal = grandTotal - discountAmount;
                                              const serviceCount = extras.filter(item => item.type === 'service').length;
                                              const foodCount = extras.filter(item => item.type === 'food').length;
                                              return (
@@ -1815,14 +2486,77 @@ const FloatingBills = () => {
                                                          )}
                                                       </div>
                                                    )}
+
+                                                   {/* Voucher Input Section */}
+                                                   <div className="mb-4 pb-4 border-b border-gray-200">
+                                                      <label className="block text-sm font-semibold text-gray-700 mb-2">
+                                                         Mã ưu đãi / Voucher
+                                                      </label>
+                                                      {appliedVoucher ? (
+                                                         <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+                                                            <div className="flex items-center justify-between">
+                                                               <div>
+                                                                  <p className="font-semibold text-green-700">{appliedVoucher.voucherCode}</p>
+                                                                  <p className="text-sm text-green-600">{appliedVoucher.promotionTitle}</p>
+                                                                  <p className="text-sm text-green-600">Giảm: {formatCurrency(appliedVoucher.discountAmount)}</p>
+                                                               </div>
+                                                               <button
+                                                                  onClick={handleRemoveVoucher}
+                                                                  className="text-red-500 hover:text-red-700 p-1"
+                                                                  title="Xóa voucher"
+                                                               >
+                                                                  <X className="w-5 h-5" />
+                                                               </button>
+                                                            </div>
+                                                         </div>
+                                                      ) : (
+                                                         <div className="flex gap-2">
+                                                            <input
+                                                               type="text"
+                                                               value={voucherCode}
+                                                               onChange={(e) => {
+                                                                  setVoucherCode(e.target.value.toUpperCase());
+                                                                  setVoucherError('');
+                                                               }}
+                                                               placeholder="Nhập mã voucher..."
+                                                               className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2fd680] focus:border-transparent uppercase"
+                                                            />
+                                                            <button
+                                                               onClick={() => handleApplyVoucher(grandTotal)}
+                                                               disabled={voucherLoading || !voucherCode.trim()}
+                                                               className="px-4 py-2 bg-[#2fd680] text-white font-semibold rounded-lg hover:bg-[#25b56c] disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+                                                            >
+                                                               {voucherLoading ? '...' : 'Áp dụng'}
+                                                            </button>
+                                                         </div>
+                                                      )}
+                                                      {voucherError && (
+                                                         <p className="mt-2 text-sm text-red-500">{voucherError}</p>
+                                                      )}
+                                                   </div>
+
+                                                   {/* Display discount if voucher applied */}
+                                                   {appliedVoucher && (
+                                                      <div className="mb-3 pb-3 border-b space-y-2">
+                                                         <div className="flex justify-between text-gray-700">
+                                                            <span>Tạm tính:</span>
+                                                            <span className="font-semibold">{formatCurrency(grandTotal)}</span>
+                                                         </div>
+                                                         <div className="flex justify-between text-green-600">
+                                                            <span>Giảm giá ({appliedVoucher.discountDescription}):</span>
+                                                            <span className="font-semibold">-{formatCurrency(discountAmount)}</span>
+                                                         </div>
+                                                      </div>
+                                                   )}
+
                                                    <div className="flex justify-between items-center mb-4">
                                                       <span className="text-xl font-bold text-gray-800">Tổng thanh toán:</span>
                                                       <span className="text-4xl font-bold text-[#2fd680]">
-                                                         {formatCurrency(grandTotal)}
+                                                         {formatCurrency(finalTotal)}
                                                       </span>
                                                    </div>
                                                    <button
-                                                      onClick={() => {
+                                                      onClick={async () => {
                                                          setSelectedGroup(group);
                                                          setActiveTab('payment');
                                                          // Scroll to top of content when switching to payment tab
@@ -1831,6 +2565,19 @@ const FloatingBills = () => {
                                                                contentRef.current.scrollTop = 0;
                                                             }
                                                          }, 50);
+
+                                                         // Bắt đầu xác thực email ngay lập tức
+                                                         const userEmail = user?.email || "trongluffy22@gmail.com";
+                                                         console.log("🔐 Bắt đầu xác thực thanh toán qua email:", userEmail);
+
+                                                         // Thu thập bill IDs từ group hiện tại
+                                                         const billIdsToUpdate = group.bills.map((b: Bill) => b._id).filter(Boolean);
+                                                         console.log("📋 Bill IDs to update:", billIdsToUpdate);
+
+                                                         resetEmailVerification();
+                                                         setTimeout(() => {
+                                                            startVerification(userEmail, 120, billIdsToUpdate);
+                                                         }, 500);
                                                       }}
                                                       className="w-full bg-[#2fd680] text-white py-4 px-6 rounded-xl font-bold text-lg hover:bg-[#25a060] transition-all duration-300 shadow-lg hover:shadow-2xl transform hover:scale-[1.02] active:scale-[0.98]"
                                                    >
@@ -1850,12 +2597,42 @@ const FloatingBills = () => {
                      {/* Payment Tab Content */}
                      {activeTab === 'payment' && (selectedGroup || extras.length > 0) && (
                         <div className="space-y-4">
-                           {/* Payment Header */}
-                           <div className="text-center mb-6">
-                              <p className="text-2xl font-bold text-gray-800 mb-2">Quét mã QR hoặc chuyển khoản để thanh toán</p>
-                           </div>
+                           {/* Payment Header - Ẩn khi đang xác thực hoặc có kết quả */}
+                           {!emailVerifying && emailSuccess === null && (
+                              <div className="text-center mb-6">
+                                 <p className="text-2xl font-bold text-gray-800 mb-2">Thanh toán</p>
+                                 <p className="text-sm text-gray-600">Quét mã QR hoặc chuyển khoản để thanh toán</p>
+                              </div>
+                           )}
 
-                           {paymentMessage && (
+                           {/* Thông báo kết quả thanh toán - Hiển thị toàn màn hình */}
+                           {emailSuccess !== null && (
+                              <div className="fixed inset-0 bg-black bg-opacity-50 z-[100] flex items-center justify-center">
+                                 <div className={`p-8 rounded-2xl shadow-2xl transform animate-bounce ${emailSuccess
+                                    ? 'bg-green-50 border-4 border-green-400'
+                                    : 'bg-red-50 border-4 border-red-400'
+                                    }`}>
+                                    <div className="flex flex-col items-center gap-4">
+                                       {emailSuccess ? (
+                                          <CheckCircle className="w-20 h-20 text-green-500" />
+                                       ) : (
+                                          <X className="w-20 h-20 text-red-500" />
+                                       )}
+                                       <span className={`font-bold text-2xl ${emailSuccess ? 'text-green-700' : 'text-red-700'}`}>
+                                          {emailSuccess ? "Thanh toán thành công!" : "Thanh toán thất bại"}
+                                       </span>
+                                       <p className={`text-base ${emailSuccess ? 'text-green-600' : 'text-red-600'}`}>
+                                          {emailSuccess ? "Cảm ơn bạn đã sử dụng dịch vụ" : "Vui lòng thử lại sau"}
+                                       </p>
+                                       <p className="text-sm text-gray-500 mt-2">
+                                          {emailSuccess ? "Tự động đóng sau 2 giây..." : "Tự động đóng sau 3 giây..."}
+                                       </p>
+                                    </div>
+                                 </div>
+                              </div>
+                           )}
+
+                           {paymentMessage && !emailVerifying && emailSuccess === null && (
                               <div className={`mb-4 p-4 rounded-lg border-2 text-center font-medium ${paymentSuccess
                                  ? 'bg-green-50 border-green-300 text-green-700'
                                  : paymentMessage.includes('❌')
@@ -1929,7 +2706,7 @@ const FloatingBills = () => {
                                              {/* Account Number */}
                                              <p className="flex items-center justify-between border-b pb-2">
                                                 <span className="font-semibold text-gray-700">Số tài khoản:</span>
-                                                <strong className="text-[#2fd680] font-mono text-right">0396256658</strong>
+                                                <strong className="text-[#2fd680] font-mono text-right">983917976143</strong>
                                              </p>
 
                                              {/* Amount */}
@@ -1942,10 +2719,22 @@ const FloatingBills = () => {
                                                       const billsTotal = billsToSum.reduce((sum: number, b: any) => sum + (b.finalAmount || 0), 0);
                                                       const extrasTotal = extras.reduce((sum, item) => sum + (item.price * item.quantity), 0);
                                                       const totalAmount = billsTotal + extrasTotal;
-                                                      return totalAmount.toLocaleString('vi-VN');
+                                                      const discountAmount = appliedVoucher?.discountAmount || 0;
+                                                      const finalTotal = totalAmount - discountAmount;
+                                                      return finalTotal.toLocaleString('vi-VN');
                                                    })()} ₫
                                                 </strong>
                                              </p>
+
+                                             {/* Voucher Discount - only show if applied */}
+                                             {appliedVoucher && (
+                                                <p className="flex items-center justify-between border-b pb-2 bg-green-50 -mx-2 px-2 rounded">
+                                                   <span className="font-semibold text-green-700">Giảm giá ({appliedVoucher.voucherCode}):</span>
+                                                   <strong className="text-green-600 font-bold text-right">
+                                                      -{appliedVoucher.discountAmount.toLocaleString('vi-VN')} ₫
+                                                   </strong>
+                                                </p>
+                                             )}
 
                                              {/* Transfer Content */}
                                              <p className="flex items-start justify-between bg-yellow-50 p-2 rounded border border-yellow-200">
@@ -2083,7 +2872,7 @@ const FloatingBills = () => {
                                           onClick={async () => {
                                              try {
                                                 console.log('✅ User clicked Đã thanh toán');
-                                                const token = localStorage.getItem('auth_token') || localStorage.getItem('token');
+                                                const token = localStorage.getItem('token');
                                                 if (!token) {
                                                    setPaymentMessage('❌ Bạn cần đăng nhập để xác nhận');
                                                    return;

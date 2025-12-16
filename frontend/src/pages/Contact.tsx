@@ -72,7 +72,7 @@ export default function Contact() {
                   <h3 className="text-xl font-bold text-gray-900 mb-2">Email</h3>
                   <p className="text-gray-600 mb-2">Liên hệ qua email</p>
                   <a href="mailto:contact@hotelhub.vn" className="text-blue-600 font-semibold hover:text-blue-700">
-                    contact@hotelhub.vn
+                    hotelhub2202@gmail.com
                   </a>
                 </div>
               </div>
@@ -86,8 +86,8 @@ export default function Contact() {
                 <div>
                   <h3 className="text-xl font-bold text-gray-900 mb-2">Hotline</h3>
                   <p className="text-gray-600 mb-2">Hỗ trợ 24/7</p>
-                  <a href="tel:1900123456" className="text-green-600 font-semibold hover:text-green-700">
-                    1900 123 456
+                  <a href="tel:0931673949" className="text-green-600 font-semibold hover:text-green-700">
+                    0931673949
                   </a>
                 </div>
               </div>

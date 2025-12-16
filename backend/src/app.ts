@@ -9,9 +9,12 @@ import { errorMiddleware } from "./middlewares/errorMiddleware";
 import authRoutes from "./routes/authRoutes";
 import bookingRoutes from "./routes/bookingRoutes";
 import billRoutes from "./routes/billRoutes";
+import selectRoomRoutes from "./routes/selectRoomRoutes";
 import menuItemRoutes from "./routes/menuItemRoutes";
 import roomRoutes from "./routes/roomRoutes";
 import reviewRoutes from "./routes/reviewRoutes";
+import paymentRoutes from "./routes/paymentRoutes";
+import promotionRoutes from "./routes/promotionRoutes";
 
 const app: Application = express();
 
@@ -44,11 +47,14 @@ app.get("/api/ping", (_req, res) => {
 });
 
 app.use("/api/auth", authRoutes);
-app.use("/api/bookings", bookingRoutes);
-app.use("/api/bills", billRoutes);
+app.use("/api/select-room", selectRoomRoutes); // Chọn phòng → Tạo Bill
+app.use("/api/bookings", bookingRoutes); // Quản lý Booking (sau thanh toán)
+app.use("/api/bills", billRoutes); // Quản lý Bill, xác nhận thanh toán
 app.use("/api/menu-items", menuItemRoutes);
-app.use("/api/rooms", roomRoutes);
+app.use("/api/rooms", roomRoutes); // Lấy danh sách phòng
 app.use("/api/reviews", reviewRoutes);
+app.use("/api/payments", paymentRoutes);
+app.use("/api/promotions", promotionRoutes);
 
 app.use(errorMiddleware);
 

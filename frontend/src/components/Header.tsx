@@ -101,7 +101,7 @@ export default function Header() {
               ẨM THỰC
             </Link>
             <Link
-              to="/locations"
+              to="/promotion"
               className={`font-['Be_Vietnam_Pro'] text-base font-semibold leading-5 capitalize transition-colors ${isHomePage && !scrolled
                 ? "text-white hover:text-[#2fd680] drop-shadow-[0_2px_4px_rgba(0,0,0,0.3)]"
                 : "text-gray-900 hover:text-[#2fd680]"

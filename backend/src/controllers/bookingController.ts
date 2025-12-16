@@ -1,7 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import Booking from "../models/Booking";
 import Room from "../models/Room";
-// import Policy from "../models/Policy";
 import Bill from "../models/Bill";
 import {
   successResponse,
@@ -11,234 +10,19 @@ import { AppError } from "../middlewares/errorMiddleware";
 import { AuthRequest } from "../middlewares/authMiddleware";
 import { sendBookingConfirmation } from "../utils/sendEmail";
 
-export const createBooking = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => {
-  try {
-    const {
-      roomId,
-      roomType,
-      roomName,
-      roomPrice: customRoomPrice,
-      fullName,
-      email,
-      phone,
-      checkIn,
-      checkOut,
-      guests,
-      paymentMethod,
-      specialRequests,
-    } = req.body;
+/**
+ * BOOKING CONTROLLER
+ *
+ * Quy trình mới:
+ * 1. Khách chọn phòng → Tạo Bill (qua billController.createBillDirect)
+ * 2. Khách thanh toán QR → Xác nhận thanh toán
+ * 3. Thanh toán thành công → Tạo Booking (qua billController.convertBillToBooking hoặc userConfirmPayment)
+ *
+ * Controller này chỉ quản lý Booking đã được tạo, KHÔNG tạo Booking trực tiếp.
+ * Booking chỉ được tạo SAU KHI thanh toán thành công.
+ */
 
-    let room = null;
-    let roomPrice = 0;
-
-    const isValidRoomId =
-      roomId && typeof roomId === "string" && roomId.trim().length > 0;
-
-    if (isValidRoomId) {
-      room = await Room.findById(roomId).catch(() => null);
-      if (!room) {
-        if (roomName && customRoomPrice) {
-          room = null;
-          roomPrice = parseFloat(customRoomPrice);
-        } else {
-          throw new AppError("Room not found", 404);
-        }
-      } else {
-        if (!room.availability || room.soldOut) {
-          throw new AppError("Room is not available", 400);
-        }
-        roomPrice = room.discountPrice || room.price;
-      }
-    } else if (roomName && customRoomPrice) {
-      roomPrice = parseFloat(customRoomPrice);
-    } else {
-      throw new AppError("Room information is required", 400);
-    }
-
-    const checkInDate = new Date(checkIn);
-    const checkOutDate = new Date(checkOut);
-    const nights = Math.ceil(
-      (checkOutDate.getTime() - checkInDate.getTime()) / (1000 * 60 * 60 * 24)
-    );
-
-    if (nights <= 0) {
-      throw new AppError("Invalid check-in/check-out dates", 400);
-    }
-
-    const totalPrice = roomPrice * nights;
-
-    const bookingPayload: any = {
-      roomName: roomName || roomType,
-      fullName,
-      email,
-      phone,
-      checkIn: checkInDate,
-      checkOut: checkOutDate,
-      guests,
-      totalPrice,
-      status: "confirmed",
-      paymentStatus: paymentMethod === "deposit" ? "unpaid" : "paid",
-      specialRequests: roomType
-        ? `Loại phòng: ${roomType}${
-            specialRequests ? ". " + specialRequests : ""
-          }`
-        : specialRequests,
-    };
-    if (room) {
-      bookingPayload.room = room._id;
-    } else if (roomType) {
-      bookingPayload.roomType = roomType;
-      bookingPayload.nightlyPrice = roomPrice;
-    }
-
-    const booking = await Booking.create(bookingPayload);
-
-    let populatedBooking = booking;
-    if (room) {
-      populatedBooking = (await Booking.findById(booking._id).populate(
-        "room"
-      )) as any;
-    }
-
-    const roomInfo = room
-      ? {
-          name: room.name,
-          type: room.type,
-          size: room.size,
-          bedType: room.bedType,
-          maxGuests: room.maxGuests,
-          amenities: room.amenities,
-          images: room.images,
-          location: room.location,
-          brand: room.brand,
-        }
-      : {
-          name: roomType,
-          type: roomType,
-          size: "-",
-          bedType: "-",
-          maxGuests: guests,
-          amenities: [],
-          images: [],
-          location: "-",
-          brand: "HOTELHUB",
-        };
-
-    try {
-      const emailPayloadBase = {
-        bookingId: (booking as any)._id.toString(),
-        fullName,
-        phone,
-        email,
-        room: roomInfo,
-        checkIn: checkInDate.toLocaleDateString("vi-VN", {
-          weekday: "long",
-          year: "numeric",
-          month: "long",
-          day: "numeric",
-        }),
-        checkOut: checkOutDate.toLocaleDateString("vi-VN", {
-          weekday: "long",
-          year: "numeric",
-          month: "long",
-          day: "numeric",
-        }),
-        nights,
-        guests,
-        roomPrice: roomPrice.toLocaleString("vi-VN"),
-        totalPrice: totalPrice.toLocaleString("vi-VN"),
-        specialRequests,
-        // policies,
-      };
-
-      await sendBookingConfirmation(email, emailPayloadBase);
-      await sendBookingConfirmation("trongluffy22@gmail.com", emailPayloadBase);
-    } catch (emailError) {
-      console.error("Error sending confirmation email:", emailError);
-    }
-
-    // Auto create bill after booking and return it together with booking
-    let createdBill: any = null;
-    try {
-      const tax = totalPrice * 0.08;
-      const finalAmount = totalPrice + tax;
-      const userId = (req as any).user?._id;
-
-      const bill = await Bill.create({
-        booking: booking._id,
-        user: userId,
-        customerInfo: {
-          fullName,
-          email,
-          phone,
-        },
-        roomInfo: {
-          roomId: room?._id,
-          roomName: roomName || room?.name || roomType || "Standard Room",
-          roomType: room?.type || roomType || "Standard",
-          nightlyPrice: roomPrice,
-        },
-        bookingDetails: {
-          roomName: roomName || room?.name || roomType || "Standard Room",
-          roomType: room?.type || roomType || "Standard",
-          nightlyPrice: roomPrice,
-          nights,
-          guests,
-          checkIn: checkInDate,
-          checkOut: checkOutDate,
-          specialRequests,
-        },
-        checkIn: checkInDate,
-        checkOut: checkOutDate,
-        nights,
-        guests,
-        roomPrice,
-        totalPrice,
-        discount: 0,
-        tax,
-        finalAmount,
-        paymentMethod: paymentMethod === "deposit" ? "deposit" : "full",
-        paymentStatus: paymentMethod === "deposit" ? "unpaid" : "paid",
-        specialRequests,
-        status: "active",
-        issuedDate: new Date(),
-      });
-
-      createdBill = await Bill.findById(bill._id)
-        .populate("booking")
-        .populate("user", "fullName email")
-        .populate("roomInfo.roomId");
-    } catch (billError) {
-      console.error("Failed to create bill:", billError);
-    }
-
-    try {
-      res
-        .status(201)
-        .json(
-          successResponse(
-            { booking: populatedBooking, bill: createdBill },
-            "Booking and bill created successfully"
-          )
-        );
-    } catch (responseError) {
-      console.error("❌ Error sending response:", responseError);
-      if (!res.headersSent) {
-        res.status(500).json({
-          success: false,
-          message: "Error sending response",
-        });
-      }
-    }
-  } catch (error) {
-    next(error);
-  }
-};
-
+// Lấy tất cả booking (Admin)
 export const getAllBookings = async (
   req: Request,
   res: Response,
@@ -264,6 +48,7 @@ export const getAllBookings = async (
   }
 };
 
+// Lấy booking theo ID
 export const getBookingById = async (
   req: Request,
   res: Response,
@@ -283,6 +68,7 @@ export const getBookingById = async (
   }
 };
 
+// Lấy danh sách booking của user đang đăng nhập
 export const getUserBookings = async (
   req: AuthRequest,
   res: Response,
@@ -299,6 +85,7 @@ export const getUserBookings = async (
   }
 };
 
+// Cập nhật trạng thái booking (Admin)
 export const updateBookingStatus = async (
   req: Request,
   res: Response,
@@ -321,6 +108,7 @@ export const updateBookingStatus = async (
   }
 };
 
+// Hủy booking
 export const cancelBooking = async (
   req: AuthRequest,
   res: Response,
@@ -337,11 +125,142 @@ export const cancelBooking = async (
       throw new AppError("Booking is already cancelled", 400);
     }
 
+    // Hoàn lại số lượng phòng
+    if (booking.room) {
+      await Room.findByIdAndUpdate(booking.room, {
+        $inc: { quantity: 1 },
+        soldOut: false,
+      });
+      console.log(`📦 Đã hoàn lại quantity phòng sau khi hủy booking`);
+    }
+
     booking.status = "cancelled";
     await booking.save();
+
+    // Cập nhật Bill liên quan nếu có
+    try {
+      await Bill.updateOne(
+        { booking: booking._id },
+        { status: "cancelled", paymentStatus: "refunded" }
+      );
+    } catch (err) {
+      console.warn("Could not update related bill:", err);
+    }
 
     res.json(successResponse(booking, "Booking cancelled successfully"));
   } catch (error) {
     next(error);
+  }
+};
+
+// Tạo Booking từ Bill sau khi thanh toán thành công (Internal use - được gọi từ billController)
+export const createBookingFromBill = async (bill: any): Promise<any> => {
+  try {
+    // Lấy thông tin từ Bill
+    const bookingData = {
+      user: bill.user,
+      room: bill.roomInfo?.roomId,
+      roomName: bill.roomInfo?.roomName,
+      fullName: bill.customerInfo?.fullName,
+      email: bill.customerInfo?.email,
+      phone: bill.customerInfo?.phone,
+      checkIn: bill.checkIn,
+      checkOut: bill.checkOut,
+      nights: bill.nights,
+      guests: bill.guests,
+      totalPrice: bill.totalPrice,
+      nightlyPrice: bill.roomInfo?.nightlyPrice,
+      specialRequests: bill.specialRequests || "",
+      paymentStatus: "paid",
+      paymentMethod: bill.paymentMethod,
+      status: "confirmed",
+    };
+
+    const booking = await Booking.create(bookingData);
+
+    // Giảm số lượng phòng sau khi đặt thành công
+    if (bill.roomInfo?.roomId) {
+      const room = await Room.findById(bill.roomInfo.roomId);
+      if (room) {
+        await Room.findByIdAndUpdate(room._id, {
+          $inc: { quantity: -1 },
+          soldOut: room.quantity - 1 <= 0,
+        });
+        console.log(
+          `📦 Đã giảm quantity phòng ${room.name}: ${room.quantity} -> ${
+            room.quantity - 1
+          }`
+        );
+      }
+    }
+
+    // Gửi email xác nhận đặt phòng
+    try {
+      const room = bill.roomInfo?.roomId
+        ? await Room.findById(bill.roomInfo.roomId)
+        : null;
+
+      const roomInfo = room
+        ? {
+            name: room.name,
+            type: room.type,
+            size: room.size,
+            bedType: room.bedType,
+            maxGuests: room.maxGuests,
+            amenities: room.amenities,
+            images: room.images,
+            location: room.location,
+            brand: room.brand,
+          }
+        : {
+            name: bill.roomInfo?.roomName || "Phòng tiêu chuẩn",
+            type: "Standard",
+            size: "-",
+            bedType: "-",
+            maxGuests: bill.guests,
+            amenities: [],
+            images: [],
+            location: "-",
+            brand: "HOTELHUB",
+          };
+
+      const emailPayload = {
+        bookingId: (booking as any)._id.toString(),
+        fullName: bill.customerInfo?.fullName,
+        phone: bill.customerInfo?.phone,
+        email: bill.customerInfo?.email,
+        room: roomInfo,
+        checkIn: new Date(bill.checkIn).toLocaleDateString("vi-VN", {
+          weekday: "long",
+          year: "numeric",
+          month: "long",
+          day: "numeric",
+        }),
+        checkOut: new Date(bill.checkOut).toLocaleDateString("vi-VN", {
+          weekday: "long",
+          year: "numeric",
+          month: "long",
+          day: "numeric",
+        }),
+        nights: bill.nights,
+        guests: bill.guests,
+        roomPrice: (bill.roomInfo?.nightlyPrice || 0).toLocaleString("vi-VN"),
+        totalPrice: (bill.totalPrice || 0).toLocaleString("vi-VN"),
+        specialRequests: bill.specialRequests,
+      };
+
+      await sendBookingConfirmation(bill.customerInfo?.email, emailPayload);
+      console.log(
+        "✅ Đã gửi email xác nhận đặt phòng đến:",
+        bill.customerInfo?.email
+      );
+    } catch (emailError) {
+      console.error("❌ Lỗi gửi email xác nhận:", emailError);
+    }
+
+    return booking;
+  } catch (error) {
+    console.error("❌ Lỗi tạo booking từ bill:", error);
+    throw error;
   }
 };

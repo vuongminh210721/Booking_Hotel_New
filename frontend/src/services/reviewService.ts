@@ -19,7 +19,7 @@ export interface Review {
 
 const buildHeaders = (contentType = "application/json"): HeadersInit => {
   const headers: Record<string, string> = { "Content-Type": contentType };
-  const token = localStorage.getItem("auth_token");
+  const token = localStorage.getItem("token");
   if (token) headers.Authorization = `Bearer ${token}`;
   return headers;
 };

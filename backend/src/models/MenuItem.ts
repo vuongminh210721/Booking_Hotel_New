@@ -1,6 +1,7 @@
 import mongoose, { Schema, Document } from "mongoose";
 
 export interface IMenuItem extends Document {
+  user?: mongoose.Types.ObjectId; // User ownership
   name: string;
   description: string;
   category:
@@ -26,6 +27,11 @@ export interface IMenuItem extends Document {
 
 const MenuItemSchema: Schema = new Schema(
   {
+    user: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      required: false, // Support for system/global items
+    },
     name: { type: String, required: true },
     description: { type: String, required: true },
     category: {

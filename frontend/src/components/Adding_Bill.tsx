@@ -249,7 +249,7 @@ export default function Booking_Home() {
 
    const handleCompletePayment = async () => {
       try {
-         // Kiểm tra token trước khi gửi request (hỗ trợ cả key cũ/new)
+         // Kiểm tra token trước khi gửi request
          const token = localStorage.getItem("token");
          if (!token) {
             setStatus("error");
@@ -265,21 +265,23 @@ export default function Booking_Home() {
             ? parseFloat(roomPrice.replace(/\./g, ""))
             : 0;
 
-         // Gọi API để tạo Bill trực tiếp (không tạo Booking trước)
-         console.log("\n\n📤 ============= Bill Creation Request Sent =============");
-         console.log("📤 URL:", `${API_BASE_URL}/bills/create-direct`);
+         // Gọi API để lưu booking
+         console.log("\n\n📤 ============= Booking Request Sent =============");
+         console.log("📤 URL:", `${API_BASE_URL}/bookings`);
          console.log("📤 Token (first 30 chars):", token.substring(0, 30) + "...");
          console.log("📤 Body:", {
-            roomId,
+            roomName,
+            roomPrice: pricePerNight,
             fullName,
             email,
             phone,
             checkIn,
             checkOut,
             guests,
+            paymentMethod,
          });
 
-         const response = await fetch(`${API_BASE_URL}/bills/create-direct`, {
+         const response = await fetch(`${API_BASE_URL}/bookings`, {
             method: "POST",
             headers: {
                "Content-Type": "application/json",
@@ -287,13 +289,15 @@ export default function Booking_Home() {
             },
             body: JSON.stringify({
                roomId: roomId || undefined,
+               roomName: roomName || "",
+               roomPrice: pricePerNight.toString(),
                fullName,
                email,
                phone,
                checkIn,
                checkOut,
                guests,
-               specialRequests: "",
+               paymentMethod,
             }),
          });
 
@@ -301,23 +305,90 @@ export default function Booking_Home() {
          console.log("📤 ===============================================\n");
 
          if (response.ok) {
-            // Parse response to obtain bill details
+            // Parse response to obtain bill/booking details (robust to multiple shapes)
             let parsed: any = null;
             try {
                parsed = await response.json();
             } catch { parsed = null; }
 
-            console.log("\n\n📥 ============= Bill Creation Response Received =============");
+            console.log("\n\n📥 ============= Booking Response Received =============");
             console.log("📥 Full response object:", JSON.stringify(parsed, null, 2));
             console.log("📥 Response.success:", parsed?.success);
-            console.log("📥 Response.data (Bill):", parsed?.data);
+            console.log("📥 Response.data:", parsed?.data);
+            console.log("📥 Response.data.booking:", parsed?.data?.booking);
+            console.log("📥 Response.data.bill:", parsed?.data?.bill);
+            console.log("📥 Response.booking:", parsed?.booking);
+            console.log("📥 Response.bill:", parsed?.bill);
             console.log("📥 Response keys:", Object.keys(parsed || {}));
-            console.log("📥 ================================================================\n");
+            console.log("📥 ======================================================\n");
 
-            // Backend returns { success, data: Bill, message }
-            let billObj = parsed?.data || null;
+            // Backend returns { success, data: { booking, bill }, message }
+            let billObj = parsed?.data?.bill || parsed?.bill || null;
 
             console.log("🔍 Extracted billObj from response:", billObj);
+
+            // If backend didn't return a bill but returned booking data, build
+            // a normalized temporary bill object so the FloatingBills UI can
+            // immediately display the booked room and amounts.
+            if (!billObj) {
+               const booking = parsed?.data?.booking || parsed?.booking || null;
+               console.log("🔍 No bill in response, trying to build from booking:", booking);
+               if (booking) {
+                  try {
+                     const bCheckIn = booking.checkIn ? new Date(booking.checkIn) : new Date(checkIn);
+                     const bCheckOut = booking.checkOut ? new Date(booking.checkOut) : new Date(checkOut);
+                     const nights = Math.max(1, Math.ceil((bCheckOut.getTime() - bCheckIn.getTime()) / (1000 * 60 * 60 * 24)));
+                     const nightlyPrice = booking.nightlyPrice || booking.room?.price || (roomPrice ? parseFloat(roomPrice.toString().replace(/\./g, "")) : 0);
+                     const total = booking.totalPrice ?? nightlyPrice * nights;
+                     const tax = total * 0.08;
+                     const finalAmount = total + tax;
+
+                     const resolvedRoomName = booking.room?.name || booking.roomName || roomName || undefined;
+
+                     billObj = {
+                        _id: booking._id ? `temp-${booking._id}` : `temp-${Date.now()}`,
+                        booking: booking._id || null,
+                        customerInfo: {
+                           fullName: booking.fullName || fullName,
+                           email: booking.email || email,
+                           phone: booking.phone || phone,
+                        },
+                        roomInfo: {
+                           roomName: resolvedRoomName,
+                           // roomType: booking.roomType || undefined,
+                           nightlyPrice,
+                        },
+                        bookingDetails: {
+                           roomName: resolvedRoomName,
+                           // roomType: booking.roomType || undefined,
+                           nightlyPrice,
+                           nights,
+                           guests: booking.guests || guests,
+                           checkIn: booking.checkIn || checkIn,
+                           checkOut: booking.checkOut || checkOut,
+                           specialRequests: booking.specialRequests || "",
+                        },
+                        checkIn: booking.checkIn || checkIn,
+                        checkOut: booking.checkOut || checkOut,
+                        nights,
+                        guests: booking.guests || guests,
+                        roomPrice: nightlyPrice,
+                        totalPrice: total,
+                        discount: 0,
+                        tax,
+                        finalAmount,
+                        paymentMethod: booking.paymentMethod || paymentMethod,
+                        paymentStatus: booking.paymentStatus || (paymentMethod === "deposit" ? "unpaid" : "paid"),
+                        specialRequests: booking.specialRequests || "",
+                        status: booking.status || "active",
+                        issuedDate: new Date().toISOString(),
+                     };
+                     console.log("✅ Built fallback bill from booking:", billObj);
+                  } catch (e) {
+                     console.warn("Could not build fallback bill from booking data:", e);
+                  }
+               }
+            }
 
             const evtDetail = billObj ? { bill: billObj } : { raw: parsed };
 
@@ -561,7 +632,7 @@ export default function Booking_Home() {
                               ) : (
                                  <>
                                     <CheckCircle className="w-6 h-6" />
-                                    Xác nhận chọn phòng
+                                    Xác nhận đặt phòng
                                  </>
                               )}
                            </button>
