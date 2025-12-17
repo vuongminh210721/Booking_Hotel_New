@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import { AuthRequest } from "../middlewares/authMiddleware";
 import Review from "../models/Review";
 import { successResponse, errorResponse } from "../utils/responseFormatter";
+import { analyzeSentimentFromVietnamese } from "../services/sentimentService";
 
 export const createReview = async (req: AuthRequest, res: Response) => {
   try {
@@ -65,14 +66,42 @@ export const getMyReviews = async (req: AuthRequest, res: Response) => {
   }
 };
 
-export const getAllReviews = async (req: Request, res: Response) => {
+export const getAllReviews = async (_req: Request, res: Response) => {
   try {
-    const reviews = await Review.find({})
+    let reviews = await Review.find({})
       .populate({ path: "user", select: "fullName avatarUrl" })
       .sort({ createdAt: -1 })
       .lean();
 
-    return res.json(successResponse(reviews));
+    if (reviews.length === 0) {
+      return res.json(successResponse([]));
+    }
+
+    const enrichedReviews = await Promise.all(
+      reviews.map(async (review: any) => {
+        let sentimentScore = 0;
+
+        try {
+          const sentiment = await analyzeSentimentFromVietnamese(review.comment);
+          sentimentScore = sentiment.label === "positive" ? sentiment.score : -sentiment.score;
+        } catch (error) {
+          sentimentScore = (review.rating - 3) / 2;
+        }
+
+        return {
+          ...review,
+          _sentimentScore: sentimentScore,
+        };
+      })
+    );
+
+    const sortedReviews = enrichedReviews.sort((a: any, b: any) => {
+      return b._sentimentScore - a._sentimentScore || new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
+
+    const cleanReviews = sortedReviews.map(({ _sentimentScore, ...rest }) => rest);
+
+    return res.json(successResponse(cleanReviews));
   } catch (error: any) {
     return res
       .status(500)
@@ -140,3 +169,4 @@ export const deleteReview = async (req: AuthRequest, res: Response) => {
       .json(errorResponse(error?.message || "Failed to delete review"));
   }
 };
+

@@ -15,6 +15,16 @@ export default function Index() {
   const btnRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const [sliderDims, setSliderDims] = useState<{ width: number; left: number }>({ width: 0, left: 0 });
   const [reviews, setReviews] = useState<Review[]>([]);
+  const [currentSlide, setCurrentSlide] = useState(0);
+  const totalSlides = Math.ceil(reviews.length / 2);
+
+  const nextSlide = () => {
+    setCurrentSlide((prev) => (prev + 1) % totalSlides);
+  };
+
+  const prevSlide = () => {
+    setCurrentSlide((prev) => (prev - 1 + totalSlides) % totalSlides);
+  };
 
   useEffect(() => {
     const openHandler = () => setShowBooking(true);
@@ -32,9 +42,7 @@ export default function Index() {
     const fetchReviews = async () => {
       try {
         const allReviews = await reviewService.getAllReviews();
-        // Randomly select 6 reviews
-        const shuffled = [...allReviews].sort(() => Math.random() - 0.5);
-        setReviews(shuffled.slice(0, 6));
+        setReviews(allReviews);
       } catch (error) {
         console.error("Failed to fetch reviews:", error);
       }
@@ -326,62 +334,126 @@ export default function Index() {
               Chưa có đánh giá nào
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 md:gap-10">
-              {reviews.map((review) => (
+            <div className="relative">
+              {/* Carousel Container */}
+              <div className="overflow-hidden">
                 <div
-                  key={review._id}
-                  className="bg-white rounded-2xl p-8 shadow-lg hover:shadow-xl transition-all duration-300 transform hover:-translate-y-2 border border-gray-100"
+                  className="flex transition-transform duration-500 ease-in-out"
+                  style={{ transform: `translateX(-${currentSlide * 100}%)` }}
                 >
-                  {/* Avatar and user info at top */}
-                  <div className="flex items-start gap-4 mb-6">
-                    <div className="w-14 h-14 rounded-full overflow-hidden bg-gradient-to-br from-teal-400 to-green-400 flex items-center justify-center text-white font-bold text-xl flex-shrink-0">
-                      {review.user?.avatarUrl ? (
-                        <img
-                          src={`http://localhost:5000${review.user.avatarUrl}`}
-                          alt={review.user.fullName || "User"}
-                          className="w-full h-full object-cover"
-                          onError={(e) => {
-                            e.currentTarget.style.display = "none";
-                          }}
-                        />
-                      ) : (
-                        (review.user?.fullName?.[0] || "?").toUpperCase()
-                      )}
+                  {reviews.map((review) => (
+                    <div key={review._id} className="w-full flex-shrink-0 px-4">
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 max-w-5xl mx-auto">
+                        {/* Hiển thị đúng 2 review mỗi slide */}
+                        {reviews
+                          .slice(currentSlide * 2, currentSlide * 2 + 2)
+                          .map((review) => (
+                            <div
+                              key={review._id}
+                              className="bg-white rounded-2xl p-8 shadow-lg hover:shadow-xl transition-all duration-300 transform hover:-translate-y-2 border border-gray-100"
+                            >
+                              {/* Avatar and user info at top */}
+                              <div className="flex items-start gap-4 mb-6">
+                                <div className="w-14 h-14 rounded-full overflow-hidden bg-gradient-to-br from-teal-400 to-green-400 flex items-center justify-center text-white font-bold text-xl flex-shrink-0">
+                                  {review.user?.avatarUrl ? (
+                                    <img
+                                      src={`http://localhost:5000${review.user.avatarUrl}`}
+                                      alt={review.user.fullName || "User"}
+                                      className="w-full h-full object-cover"
+                                      onError={(e) => {
+                                        e.currentTarget.style.display = "none";
+                                      }}
+                                    />
+                                  ) : (
+                                    (review.user?.fullName?.[0] || "?").toUpperCase()
+                                  )}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <h4 className="font-bold text-gray-900 text-lg leading-tight">
+                                    {review.user?.fullName || "Ẩn danh"}
+                                  </h4>
+                                  <p className="text-sm text-gray-500 flex items-center gap-1.5 mt-1.5">
+                                    <svg className="w-3.5 h-3.5 text-teal-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                                      <path
+                                        fillRule="evenodd"
+                                        d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z"
+                                        clipRule="evenodd"
+                                      />
+                                    </svg>
+                                    <span className="truncate">{review.location}</span>
+                                  </p>
+                                </div>
+                              </div>
+
+                              {/* Room name */}
+                              <div className="mb-4">
+                                <h5 className="text-base font-semibold text-teal-600 truncate">{review.hotelName}</h5>
+                              </div>
+
+                              {/* Comment */}
+                              <p className="text-gray-700 leading-relaxed mb-6 italic text-base">
+                                "{review.comment}"
+                              </p>
+
+                              {/* Star rating */}
+                              <div className="flex items-center gap-1 pt-4 border-t border-gray-100">
+                                {[...Array(5)].map((_, star) => (
+                                  <svg
+                                    key={star}
+                                    className={`w-5 h-5 ${star < review.rating ? "text-yellow-400" : "text-gray-300"} fill-current`}
+                                    viewBox="0 0 20 20"
+                                  >
+                                    <path d="M10 15l-5.878 3.09 1.123-6.545L.489 6.91l6.572-.955L10 0l2.939 5.955 6.572.955-4.756 4.635 1.123 6.545z" />
+                                  </svg>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                      </div>
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <h4 className="font-bold text-gray-900 text-lg leading-tight">{review.user?.fullName || "Ẩn danh"}</h4>
-                      <p className="text-sm text-gray-500 flex items-center gap-1.5 mt-1.5">
-                        <svg className="w-3.5 h-3.5 text-teal-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                          <path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" />
-                        </svg>
-                        <span className="truncate">{review.location}</span>
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Room name */}
-                  <div className="mb-4">
-                    <h5 className="text-base font-semibold text-teal-600 truncate">{review.hotelName}</h5>
-                  </div>
-
-                  {/* Comment in middle */}
-                  <p className="text-gray-700 leading-relaxed mb-6 italic text-base line-clamp-4">"{review.comment}"</p>
-
-                  {/* Star rating at bottom */}
-                  <div className="flex items-center gap-1 pt-4 border-t border-gray-100">
-                    {[...Array(5)].map((_, star) => (
-                      <svg
-                        key={star}
-                        className={`w-5 h-5 ${star < review.rating ? "text-yellow-400" : "text-gray-300"
-                          } fill-current`}
-                        viewBox="0 0 20 20"
-                      >
-                        <path d="M10 15l-5.878 3.09 1.123-6.545L.489 6.91l6.572-.955L10 0l2.939 5.955 6.572.955-4.756 4.635 1.123 6.545z" />
-                      </svg>
-                    ))}
-                  </div>
+                  ))}
                 </div>
-              ))}
+              </div>
+
+              {/* Navigation Arrows */}
+              {reviews.length > 2 && (
+                <>
+                  <button
+                    onClick={prevSlide}
+                    className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 lg:-translate-x-0 w-12 h-12 rounded-full bg-white/90 backdrop-blur-sm shadow-lg flex items-center justify-center hover:bg-white hover:shadow-xl transition-all duration-300 z-10"
+                    aria-label="Previous reviews"
+                  >
+                    <svg className="w-6 h-6 text-gray-800" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                    </svg>
+                  </button>
+
+                  <button
+                    onClick={nextSlide}
+                    className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 lg:translate-x-0 w-12 h-12 rounded-full bg-white/90 backdrop-blur-sm shadow-lg flex items-center justify-center hover:bg-white hover:shadow-xl transition-all duration-300 z-10"
+                    aria-label="Next reviews"
+                  >
+                    <svg className="w-6 h-6 text-gray-800" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                  </button>
+                </>
+              )}
+
+              {/* Dots Indicator  */}
+              {reviews.length > 2 && (
+                <div className="flex justify-center gap-2 mt-12">
+                  {Array.from({ length: Math.ceil(reviews.length / 2) }).map((_, index) => (
+                    <button
+                      key={index}
+                      onClick={() => setCurrentSlide(index)}
+                      className={`w-2 h-2 rounded-full transition-all duration-300 ${index === currentSlide ? "bg-teal-600 w-8" : "bg-gray-300 hover:bg-gray-400"
+                        }`}
+                      aria-label={`Go to slide ${index + 1}`}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>
